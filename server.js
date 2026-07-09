@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { Readable } = require("stream");
 
 const PORT = Number(process.env.PORT || 8782);
 const ROOT = __dirname;
@@ -170,6 +171,33 @@ function sessionToken() {
   return crypto.createHmac("sha256", SESSION_SECRET).update("scheduler-access").digest("hex");
 }
 
+function protectedMediaUrl(sourceUrl) {
+  const encoded = Buffer.from(sourceUrl, "utf8").toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(encoded)
+    .digest("base64url")
+    .slice(0, 24);
+  return `/api/media/${encoded}.${signature}`;
+}
+
+function decodeProtectedMedia(value) {
+  const separator = value.lastIndexOf(".");
+  if (separator < 1) return null;
+  const encoded = value.slice(0, separator);
+  const actual = value.slice(separator + 1);
+  const expected = crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(encoded)
+    .digest("base64url")
+    .slice(0, 24);
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) {
+    return null;
+  }
+  const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+  return decoded.startsWith("https://res.cloudinary.com/") ? decoded : null;
+}
+
 function isAuthorized(req) {
   const cookies = parseCookies(req);
   return cookies.scheduler_session === sessionToken();
@@ -261,6 +289,36 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname.startsWith("/api/media/")) {
+    const sourceUrl = decodeProtectedMedia(url.pathname.slice("/api/media/".length));
+    if (!sourceUrl) {
+      sendJson(res, 403, { ok: false });
+      return;
+    }
+    try {
+      const headers = {};
+      if (req.headers.range) headers.Range = req.headers.range;
+      const upstream = await fetch(sourceUrl, { headers });
+      const responseHeaders = {
+        "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
+        "Accept-Ranges": upstream.headers.get("accept-ranges") || "bytes",
+        "Cache-Control": "private, max-age=3600"
+      };
+      if (upstream.headers.get("content-length")) {
+        responseHeaders["Content-Length"] = upstream.headers.get("content-length");
+      }
+      if (upstream.headers.get("content-range")) {
+        responseHeaders["Content-Range"] = upstream.headers.get("content-range");
+      }
+      res.writeHead(upstream.status, responseHeaders);
+      if (upstream.body) Readable.fromWeb(upstream.body).pipe(res);
+      else res.end();
+    } catch {
+      sendJson(res, 502, { ok: false, message: "動画を読み込めませんでした" });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/state") {
     sendJson(res, 200, sharedState);
     return;
@@ -301,7 +359,7 @@ async function handleApi(req, res, url) {
         });
         sendJson(res, 200, {
           ok: true,
-          url: uploaded.secure_url,
+          url: protectedMediaUrl(uploaded.secure_url),
           name: original
         });
         return;
@@ -335,11 +393,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname.startsWith("/seed-media/")) {
+    if (!isAuthorized(req)) {
+      sendJson(res, 401, { ok: false, message: "ログインしてください" });
+      return;
+    }
     serveFile(res, path.join(SEED_MEDIA_DIR, path.basename(url.pathname)));
     return;
   }
 
   if (url.pathname.startsWith("/uploads/")) {
+    if (!isAuthorized(req)) {
+      sendJson(res, 401, { ok: false, message: "ログインしてください" });
+      return;
+    }
     const relative = decodeURIComponent(url.pathname.slice("/uploads/".length));
     const target = path.resolve(UPLOAD_DIR, relative);
     if (!target.startsWith(path.resolve(UPLOAD_DIR))) {
