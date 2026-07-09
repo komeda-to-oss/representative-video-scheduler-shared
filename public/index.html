@@ -1,0 +1,1221 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>代表動画 投稿スケジューラー</title>
+  <style>
+    :root {
+      --ink: #172029;
+      --muted: #64717d;
+      --line: #dce2e7;
+      --paper: #ffffff;
+      --surface: #f4f7f8;
+      --teal: #087f73;
+      --teal-dark: #06655c;
+      --coral: #d7553d;
+      --amber: #f3b33d;
+      --green: #21875b;
+      --shadow: 0 10px 28px rgba(24, 43, 56, .1);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input, select, textarea { font: inherit; letter-spacing: 0; }
+    button { cursor: pointer; }
+    [hidden] { display: none !important; }
+
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 68px;
+      padding: 10px max(18px, calc((100vw - 1440px) / 2));
+      color: #fff;
+      background: #172029;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, .18);
+    }
+
+    .brand { min-width: 0; }
+    .brand strong { display: block; font-size: 20px; line-height: 1.25; }
+    .brand span { color: #b7c6ce; font-size: 12px; }
+
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+
+    .icon-button, .button {
+      min-height: 42px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-weight: 800;
+    }
+
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 42px;
+      padding: 0;
+      color: #fff;
+      background: #31404a;
+      font-size: 20px;
+    }
+
+    .icon-button:hover { background: #40525e; }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 9px 14px;
+      white-space: nowrap;
+    }
+
+    .button.primary { color: #fff; background: var(--teal); }
+    .button.primary:hover { background: var(--teal-dark); }
+    .button.secondary { color: var(--ink); border-color: var(--line); background: #fff; }
+    .button.secondary:hover { background: #eef3f4; }
+    .button.danger { color: #a22f21; border-color: #ebc2ba; background: #fff7f5; }
+    .button.small { min-height: 34px; padding: 6px 10px; font-size: 13px; }
+
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #b7c6ce;
+      font-size: 12px;
+    }
+
+    .connection::before {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      content: "";
+    }
+
+    main {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 22px 18px 60px;
+    }
+
+    .month-toolbar {
+      display: grid;
+      grid-template-columns: auto minmax(210px, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .month-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .month-title { min-width: 0; text-align: center; }
+    .month-title h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+    .month-title p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 25px 0 12px;
+    }
+
+    .section-head h2 { margin: 0; font-size: 19px; }
+    .section-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+    .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .video-card {
+      display: grid;
+      grid-template-columns: minmax(128px, 42%) minmax(0, 1fr);
+      min-height: 320px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .visual {
+      position: relative;
+      min-height: 320px;
+      border: 0;
+      padding: 0;
+      overflow: hidden;
+      color: #fff;
+      background: #24343e;
+    }
+
+    .visual img {
+      width: 100%;
+      height: 100%;
+      min-height: 320px;
+      object-fit: cover;
+      object-position: center;
+      display: block;
+    }
+
+    .visual-placeholder {
+      display: grid;
+      place-items: center;
+      height: 100%;
+      min-height: 320px;
+      padding: 18px;
+      text-align: center;
+      background: #24343e;
+    }
+
+    .play {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .92);
+      box-shadow: 0 5px 20px rgba(0, 0, 0, .28);
+      transform: translate(-50%, -50%);
+      font-size: 21px;
+    }
+
+    .card-content {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      padding: 13px;
+    }
+
+    .number-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .status {
+      border: 0;
+      border-radius: 999px;
+      padding: 5px 8px;
+      color: #7c5410;
+      background: #fff0c9;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .status.ready { color: #0d6843; background: #dff4e9; }
+
+    .title-input {
+      width: 100%;
+      margin: 10px 0;
+      border: 0;
+      border-bottom: 2px solid var(--line);
+      padding: 5px 1px 8px;
+      color: var(--ink);
+      background: transparent;
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .title-input:focus { outline: 0; border-color: var(--teal); }
+
+    .date-control {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 34px;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .date-control input {
+      width: 100%;
+      min-width: 0;
+      min-height: 42px;
+      border: 1px solid #bdc8cf;
+      border-radius: 6px;
+      padding: 7px 8px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .step {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: #eef3f4;
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .file-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: auto;
+      padding-top: 11px;
+    }
+
+    .file-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px;
+      background: #f7f9fa;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .file-label input { display: none; }
+    .file-label:hover { border-color: var(--teal); color: var(--teal-dark); }
+
+    .download-button {
+      min-height: 38px;
+      border: 1px solid #b8d9d5;
+      border-radius: 6px;
+      padding: 7px;
+      color: var(--teal-dark);
+      background: #edf8f6;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .download-button:hover { border-color: var(--teal); background: #dff2ef; }
+    .download-button:disabled { cursor: not-allowed; opacity: .45; }
+
+    .schedule-band {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .schedule-row {
+      display: grid;
+      grid-template-columns: 54px minmax(160px, 1fr) minmax(190px, 1.5fr) 120px;
+      align-items: center;
+      gap: 12px;
+      min-height: 58px;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .schedule-row:last-child { border-bottom: 0; }
+    .schedule-row strong { font-size: 13px; }
+    .schedule-row input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid #c5ced4;
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #fff;
+    }
+
+    .history-list { display: grid; gap: 10px; }
+
+    .history-month {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .history-month summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 16px;
+      cursor: pointer;
+      font-weight: 900;
+    }
+
+    .history-month summary span { color: var(--muted); font-size: 12px; }
+    .history-content { padding: 0 14px 14px; }
+    .history-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+    .empty { padding: 24px; color: var(--muted); text-align: center; }
+
+    dialog {
+      width: min(620px, calc(100% - 24px));
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      border: 0;
+      border-radius: 8px;
+      padding: 0;
+      color: var(--ink);
+      background: #fff;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .35);
+    }
+
+    dialog::backdrop { background: rgba(18, 28, 34, .62); }
+
+    .dialog-head {
+      position: sticky;
+      z-index: 2;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 15px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .dialog-head h2 { margin: 0; font-size: 18px; }
+    .dialog-body { display: grid; gap: 15px; padding: 18px; }
+    .dialog-footer {
+      position: sticky;
+      bottom: 0;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 13px 18px;
+      border-top: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .field { display: grid; gap: 6px; }
+    .field label { font-size: 13px; font-weight: 800; }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #bec8ce;
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: var(--ink);
+      background: #fff;
+    }
+
+    .field textarea { min-height: 118px; resize: vertical; }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .media-dialog { width: min(520px, calc(100% - 24px)); background: #101719; }
+    .media-dialog video, .media-dialog img {
+      display: block;
+      width: 100%;
+      max-height: calc(100vh - 100px);
+      object-fit: contain;
+      background: #101719;
+    }
+
+    .lock {
+      position: fixed;
+      z-index: 100;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: #172029;
+    }
+
+    .lock-panel {
+      width: min(390px, 100%);
+      border-radius: 8px;
+      padding: 26px;
+      background: #fff;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .35);
+    }
+
+    .lock-panel h1 { margin: 0 0 6px; font-size: 23px; }
+    .lock-panel p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+    .lock-panel input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid #aebbc3;
+      border-radius: 6px;
+      padding: 9px 11px;
+      font-size: 18px;
+    }
+
+    .lock-panel .button { width: 100%; margin-top: 10px; }
+    .error { min-height: 20px; margin-top: 8px; color: #b63325; font-size: 13px; }
+
+    .toast {
+      position: fixed;
+      z-index: 120;
+      right: 18px;
+      bottom: 18px;
+      max-width: min(360px, calc(100vw - 36px));
+      border-radius: 6px;
+      padding: 11px 14px;
+      color: #fff;
+      background: #172029;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: .18s ease;
+    }
+
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1100px) {
+      .video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 720px) {
+      .topbar { min-height: 60px; }
+      .brand strong { font-size: 16px; }
+      .brand span, .connection { display: none; }
+      main { padding: 14px 10px 46px; }
+      .month-toolbar { grid-template-columns: 1fr auto; }
+      .month-nav { grid-column: 1 / -1; justify-content: center; }
+      .month-title { text-align: left; }
+      .month-title h1 { font-size: 21px; }
+      .video-grid { grid-template-columns: 1fr; }
+      .video-card { grid-template-columns: minmax(118px, 38%) minmax(0, 1fr); min-height: 292px; }
+      .visual, .visual img, .visual-placeholder { min-height: 292px; }
+      .date-control { grid-template-columns: 1fr 1fr; }
+      .date-control input {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        padding: 7px 5px;
+        font-size: 13px;
+      }
+      .date-control .step { grid-row: 2; }
+      .section-head { align-items: stretch; flex-direction: column; }
+      .section-actions { justify-content: flex-start; }
+      .schedule-row { grid-template-columns: 42px minmax(145px, 1fr) 92px; }
+      .schedule-row .schedule-title { grid-column: 2 / -1; grid-row: 2; }
+      .field-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="lock" id="lock">
+    <form class="lock-panel" id="loginForm">
+      <h1>代表動画スケジューラー</h1>
+      <p>共有パスワードを入力してください</p>
+      <input id="passcode" type="password" autocomplete="current-password" aria-label="共有パスワード">
+      <button class="button primary" type="submit">ログイン</button>
+      <div class="error" id="loginError"></div>
+    </form>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <strong>代表動画 投稿スケジューラー</strong>
+      <span>共有データ版</span>
+    </div>
+    <div class="top-actions">
+      <span class="connection" id="connection">共有中</span>
+      <button class="button secondary" id="openSettings" type="button">設定</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="month-toolbar">
+      <div class="month-nav">
+        <button class="icon-button" id="prevMonth" type="button" title="前の月" aria-label="前の月">‹</button>
+        <input id="monthPicker" type="month" aria-label="表示する月">
+        <button class="icon-button" id="nextMonth" type="button" title="次の月" aria-label="次の月">›</button>
+      </div>
+      <div class="month-title">
+        <h1 id="monthTitle">-</h1>
+        <p id="monthSummary">-</p>
+      </div>
+      <button class="button secondary" id="reloadState" type="button">更新</button>
+    </div>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2>今月の6本</h2>
+          <p>サムネを押すと動画を確認できます</p>
+        </div>
+        <div class="section-actions">
+          <button class="button primary" id="archiveCurrent" type="button">この月を履歴に保存</button>
+          <button class="button secondary" id="newMonth" type="button">新しい月を作る</button>
+        </div>
+      </div>
+      <div class="video-grid" id="videoGrid"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2>投稿カレンダー</h2>
+          <p>日付欄または左右のボタンで変更できます</p>
+        </div>
+      </div>
+      <div class="schedule-band" id="scheduleList"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2>過去の履歴</h2>
+          <p>保存・復元・削除をここで管理します</p>
+        </div>
+      </div>
+      <div class="history-list" id="historyList"></div>
+    </section>
+  </main>
+
+  <dialog id="settingsDialog">
+    <form id="settingsForm">
+      <div class="dialog-head">
+        <h2>スケジュール設定</h2>
+        <button class="icon-button" id="closeSettings" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field-grid">
+          <div class="field">
+            <label for="shootDate">収録日</label>
+            <input id="shootDate" type="date">
+          </div>
+          <div class="field">
+            <label for="startDate">初回投稿日</label>
+            <input id="startDate" type="date">
+          </div>
+          <div class="field">
+            <label for="interval">投稿間隔</label>
+            <select id="interval">
+              <option value="5">5日ごと</option>
+              <option value="7">毎週</option>
+              <option value="10">10日ごと</option>
+              <option value="14">隔週</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="channel">投稿先</label>
+            <select id="channel">
+              <option>YouTube</option>
+              <option>Instagram</option>
+              <option>TikTok</option>
+              <option>LinkedIn</option>
+              <option>X</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="titles">動画タイトル（1行に1本）</label>
+          <textarea id="titles"></textarea>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="button secondary" id="cancelSettings" type="button">閉じる</button>
+        <button class="button primary" type="submit">設定を反映</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="media-dialog" id="mediaDialog">
+    <video id="mediaVideo" controls playsinline hidden></video>
+    <img id="mediaImage" alt="" hidden>
+  </dialog>
+
+  <dialog id="newMonthDialog">
+    <form id="newMonthForm">
+      <div class="dialog-head">
+        <h2>新しい月を作る</h2>
+        <button class="icon-button" id="closeNewMonth" type="button" aria-label="閉じる">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="newMonthValue">対象月</label>
+          <input id="newMonthValue" type="month" required>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="button secondary" id="cancelNewMonth" type="button">キャンセル</button>
+        <button class="button primary" type="submit">6本の枠を作る</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const lock = $("#lock");
+    const loginForm = $("#loginForm");
+    const loginError = $("#loginError");
+    const videoGrid = $("#videoGrid");
+    const scheduleList = $("#scheduleList");
+    const historyList = $("#historyList");
+    const monthPicker = $("#monthPicker");
+    const settingsDialog = $("#settingsDialog");
+    const mediaDialog = $("#mediaDialog");
+    const mediaVideo = $("#mediaVideo");
+    const mediaImage = $("#mediaImage");
+    const newMonthDialog = $("#newMonthDialog");
+    const toast = $("#toast");
+    const connection = $("#connection");
+
+    let state = null;
+    let lastServerRevision = 0;
+    let saveTimer = null;
+    let toastTimer = null;
+    let hasLocalChanges = false;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatMonth(value) {
+      if (!value) return "-";
+      const [year, month] = value.split("-").map(Number);
+      return `${year}年${month}月`;
+    }
+
+    function formatDate(value) {
+      if (!value) return "未設定";
+      const date = new Date(`${value}T00:00:00`);
+      return new Intl.DateTimeFormat("ja-JP", {
+        month: "numeric", day: "numeric", weekday: "short"
+      }).format(date);
+    }
+
+    function addDays(value, amount) {
+      const date = new Date(`${value}T00:00:00`);
+      date.setDate(date.getDate() + amount);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 2400);
+    }
+
+    function setConnection(ok) {
+      connection.textContent = ok ? "共有中" : "再接続中";
+      connection.style.color = ok ? "" : "#ffcf70";
+    }
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        ...options,
+        headers: {
+          ...(options.body instanceof Blob ? {} : { "Content-Type": "application/json" }),
+          ...(options.headers || {})
+        }
+      });
+      if (response.status === 401) {
+        lock.hidden = false;
+        throw new Error("ログインしてください");
+      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "通信できませんでした");
+      return result;
+    }
+
+    async function loadState({ quiet = false } = {}) {
+      try {
+        const serverState = await api("/api/state");
+        if (!hasLocalChanges || !state) {
+          state = serverState;
+          lastServerRevision = Number(serverState.revision || 0);
+          render();
+        }
+        setConnection(true);
+        if (!quiet) showToast("最新データを読み込みました");
+      } catch (error) {
+        setConnection(false);
+        if (!quiet) showToast(error.message);
+      }
+    }
+
+    async function persistState(message = "共有データを保存しました") {
+      clearTimeout(saveTimer);
+      hasLocalChanges = true;
+      try {
+        const saved = await api("/api/state", {
+          method: "PUT",
+          body: JSON.stringify({ active: state.active, archives: state.archives })
+        });
+        state = saved;
+        lastServerRevision = Number(saved.revision || 0);
+        hasLocalChanges = false;
+        setConnection(true);
+        if (message) showToast(message);
+      } catch (error) {
+        setConnection(false);
+        showToast(error.message);
+      }
+    }
+
+    function scheduleSave() {
+      hasLocalChanges = true;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => persistState(""), 500);
+    }
+
+    function videoSource(row) {
+      return row.videoUrl || row.videoData || "";
+    }
+
+    function thumbSource(row) {
+      return row.thumbUrl || row.thumbData || "";
+    }
+
+    function render() {
+      if (!state?.active) return;
+      const active = state.active;
+      const rows = active.rows || [];
+      monthPicker.value = active.month;
+      $("#monthTitle").textContent = formatMonth(active.month);
+      $("#monthSummary").textContent =
+        `${rows.length}本・${active.channel || "投稿先未設定"}・収録 ${formatDate(active.shootDate)}`;
+
+      videoGrid.innerHTML = rows.map((row, index) => {
+        const thumb = thumbSource(row);
+        const video = videoSource(row);
+        return `
+          <article class="video-card" data-index="${index}">
+            <button class="visual" type="button" data-action="preview" data-index="${index}" aria-label="No.${index + 1}を確認">
+              ${thumb
+                ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネ">`
+                : `<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`}
+              ${video ? `<span class="play">▶</span>` : ""}
+            </button>
+            <div class="card-content">
+              <div class="number-line">
+                <span>No.${index + 1}</span>
+                <button class="status ${row.ready ? "ready" : ""}" type="button" data-action="ready" data-index="${index}">
+                  ${row.ready ? "準備OK" : "未完了"}
+                </button>
+              </div>
+              <input class="title-input" data-field="title" data-index="${index}" value="${escapeHtml(row.title)}" aria-label="No.${index + 1}のタイトル">
+              <div class="date-control">
+                <button class="step" type="button" data-action="date-step" data-amount="-1" data-index="${index}" aria-label="1日前">−</button>
+                <input type="date" data-field="postDate" data-index="${index}" value="${escapeHtml(row.postDate)}" aria-label="No.${index + 1}の投稿日">
+                <button class="step" type="button" data-action="date-step" data-amount="1" data-index="${index}" aria-label="1日後">＋</button>
+              </div>
+              <div class="file-actions">
+                <label class="file-label">動画を変更<input type="file" accept="video/*" data-upload="video" data-index="${index}"></label>
+                <label class="file-label">サムネ変更<input type="file" accept="image/*" data-upload="thumb" data-index="${index}"></label>
+                <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${video ? "" : "disabled"}>動画保存</button>
+                <button class="download-button" type="button" data-action="download-thumb" data-index="${index}" ${thumb ? "" : "disabled"}>サムネ保存</button>
+              </div>
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      scheduleList.innerHTML = rows.map((row, index) => `
+        <div class="schedule-row">
+          <strong>No.${index + 1}</strong>
+          <input type="date" data-field="postDate" data-index="${index}" value="${escapeHtml(row.postDate)}" aria-label="No.${index + 1}の投稿日">
+          <input class="schedule-title" data-field="title" data-index="${index}" value="${escapeHtml(row.title)}" aria-label="No.${index + 1}のタイトル">
+          <button class="status ${row.ready ? "ready" : ""}" type="button" data-action="ready" data-index="${index}">
+            ${row.ready ? "準備OK" : "未完了"}
+          </button>
+        </div>
+      `).join("");
+
+      renderHistory();
+    }
+
+    function historyCards(snapshot) {
+      return `
+        <div class="video-grid">
+          ${(snapshot.rows || []).map((row, index) => `
+            <article class="video-card">
+              <button class="visual" type="button" data-history-preview="${escapeHtml(snapshot.month)}" data-index="${index}">
+                ${thumbSource(row)
+                  ? `<img src="${escapeHtml(thumbSource(row))}" alt="${escapeHtml(row.title)}のサムネ">`
+                  : `<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`}
+                ${videoSource(row) ? `<span class="play">▶</span>` : ""}
+              </button>
+              <div class="card-content">
+                <div class="number-line"><span>No.${index + 1}</span><span>${formatDate(row.postDate)}</span></div>
+                <p><strong>${escapeHtml(row.title)}</strong></p>
+                <div class="file-actions">
+                  <button class="download-button" type="button" data-action="download-history-video" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${videoSource(row) ? "" : "disabled"}>動画保存</button>
+                  <button class="download-button" type="button" data-action="download-history-thumb" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${thumbSource(row) ? "" : "disabled"}>サムネ保存</button>
+                </div>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderHistory() {
+      const months = Object.keys(state.archives || {}).sort().reverse();
+      if (!months.length) {
+        historyList.innerHTML = `<div class="empty">保存した月はまだありません</div>`;
+        return;
+      }
+      historyList.innerHTML = months.map((month) => {
+        const snapshot = state.archives[month];
+        return `
+          <details class="history-month">
+            <summary>${formatMonth(month)}<span>${snapshot.rows?.length || 0}本</span></summary>
+            <div class="history-content">
+              <div class="history-actions">
+                <button class="button primary small" type="button" data-action="restore" data-month="${month}">この月を編集する</button>
+                <button class="button danger small" type="button" data-action="delete-history" data-month="${month}">履歴から削除</button>
+              </div>
+              ${historyCards(snapshot)}
+            </div>
+          </details>
+        `;
+      }).join("");
+    }
+
+    function openMedia(row) {
+      const video = videoSource(row);
+      const thumb = thumbSource(row);
+      mediaVideo.pause();
+      mediaVideo.hidden = true;
+      mediaImage.hidden = true;
+      mediaVideo.removeAttribute("src");
+      mediaImage.removeAttribute("src");
+      if (video) {
+        mediaVideo.src = video;
+        mediaVideo.hidden = false;
+      } else if (thumb) {
+        mediaImage.src = thumb;
+        mediaImage.alt = `${row.title}のサムネ`;
+        mediaImage.hidden = false;
+      } else {
+        showToast("動画・サムネがまだありません");
+        return;
+      }
+      mediaDialog.showModal();
+    }
+
+    function extensionFromUrl(url, fallback) {
+      const clean = String(url || "").split("?")[0];
+      const match = clean.match(/\.([a-zA-Z0-9]{2,5})$/);
+      return match ? `.${match[1]}` : fallback;
+    }
+
+    async function downloadAsset(url, filename) {
+      if (!url) return;
+      showToast("保存ファイルを準備しています");
+      try {
+        const response = await fetch(url, { credentials: "same-origin" });
+        if (!response.ok) throw new Error();
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        showToast("保存を開始しました");
+      } catch {
+        showToast("保存できませんでした");
+      }
+    }
+
+    function downloadRowAsset(row, kind, index) {
+      const title = String(row.title || `動画${index + 1}`).replace(/[\\/:*?"<>|]/g, "_");
+      if (kind === "video") {
+        const url = videoSource(row);
+        downloadAsset(url, `${title}_動画${extensionFromUrl(url, ".mp4")}`);
+      } else {
+        const url = thumbSource(row);
+        downloadAsset(url, `${title}_サムネ${extensionFromUrl(url, ".jpg")}`);
+      }
+    }
+
+    function populateSettings() {
+      const active = state.active;
+      $("#shootDate").value = active.shootDate || "";
+      $("#startDate").value = active.startDate || active.rows?.[0]?.postDate || "";
+      $("#interval").value = String(active.interval || "7");
+      $("#channel").value = active.channel || "YouTube";
+      $("#titles").value = (active.rows || []).map((row) => row.title).join("\n");
+    }
+
+    function blankMonth(month) {
+      const [year, monthNumber] = month.split("-").map(Number);
+      const dateValue = (day) => {
+        const date = new Date(year, monthNumber - 1, day);
+        return date.toISOString().slice(0, 10);
+      };
+      return {
+        month,
+        shootDate: dateValue(5),
+        startDate: dateValue(8),
+        interval: "7",
+        channel: state.active.channel || "YouTube",
+        titles: "",
+        rows: Array.from({ length: 6 }, (_, index) => ({
+          postDate: dateValue(8 + index * 7),
+          title: `動画${index + 1}`,
+          memo: "",
+          ready: false,
+          thumbData: "",
+          thumbUrl: "",
+          thumbName: "",
+          videoUrl: "",
+          videoFileName: ""
+        }))
+      };
+    }
+
+    async function uploadFile(file, kind, index) {
+      const limit = 100 * 1024 * 1024;
+      if (file.size > limit) {
+        showToast("100MB以下のファイルを選んでください");
+        return;
+      }
+      showToast(`${kind === "video" ? "動画" : "サムネ"}をアップロード中です`);
+      try {
+        const result = await api(
+          `/api/upload?month=${encodeURIComponent(state.active.month)}&slot=${index}&kind=${kind}`,
+          {
+            method: "PUT",
+            body: file,
+            headers: { "X-File-Name": encodeURIComponent(file.name) }
+          }
+        );
+        const row = state.active.rows[index];
+        if (kind === "video") {
+          row.videoUrl = result.url;
+          row.videoFileName = file.name;
+          row.videoData = "";
+        } else {
+          row.thumbUrl = result.url;
+          row.thumbName = file.name;
+          row.thumbData = "";
+        }
+        render();
+        await persistState("全員に反映しました");
+      } catch (error) {
+        showToast(error.message);
+      }
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      loginError.textContent = "";
+      try {
+        await api("/api/login", {
+          method: "POST",
+          body: JSON.stringify({ passcode: $("#passcode").value })
+        });
+        lock.hidden = true;
+        await loadState({ quiet: true });
+      } catch (error) {
+        loginError.textContent = error.message;
+      }
+    });
+
+    $("#openSettings").addEventListener("click", () => {
+      populateSettings();
+      settingsDialog.showModal();
+    });
+    $("#closeSettings").addEventListener("click", () => settingsDialog.close());
+    $("#cancelSettings").addEventListener("click", () => settingsDialog.close());
+
+    $("#settingsForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const active = state.active;
+      active.shootDate = $("#shootDate").value;
+      active.startDate = $("#startDate").value;
+      active.interval = $("#interval").value;
+      active.channel = $("#channel").value;
+      const titles = $("#titles").value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+      const interval = Number(active.interval || 7);
+      active.rows.forEach((row, index) => {
+        if (titles[index]) row.title = titles[index];
+        if (active.startDate) row.postDate = addDays(active.startDate, index * interval);
+      });
+      settingsDialog.close();
+      render();
+      await persistState("設定を全員に反映しました");
+    });
+
+    function handleFieldInput(event) {
+      const index = Number(event.target.dataset.index);
+      const field = event.target.dataset.field;
+      if (!Number.isInteger(index) || !field || !state.active.rows[index]) return;
+      state.active.rows[index][field] = event.target.value;
+      if (field === "postDate" || field === "title") render();
+      scheduleSave();
+    }
+
+    document.addEventListener("change", (event) => {
+      if (event.target.dataset.field) handleFieldInput(event);
+      if (event.target.dataset.upload) {
+        const file = event.target.files?.[0];
+        if (file) uploadFile(file, event.target.dataset.upload, Number(event.target.dataset.index));
+        event.target.value = "";
+      }
+    });
+
+    document.addEventListener("click", async (event) => {
+      const target = event.target.closest("[data-action]");
+      if (!target) return;
+      const action = target.dataset.action;
+      const index = Number(target.dataset.index);
+      if (action === "preview") openMedia(state.active.rows[index]);
+      if (action === "ready") {
+        state.active.rows[index].ready = !state.active.rows[index].ready;
+        render();
+        scheduleSave();
+      }
+      if (action === "date-step") {
+        state.active.rows[index].postDate = addDays(state.active.rows[index].postDate, Number(target.dataset.amount));
+        render();
+        scheduleSave();
+      }
+      if (action === "download-video") downloadRowAsset(state.active.rows[index], "video", index);
+      if (action === "download-thumb") downloadRowAsset(state.active.rows[index], "thumb", index);
+      if (action === "download-history-video") {
+        downloadRowAsset(state.archives[target.dataset.month].rows[index], "video", index);
+      }
+      if (action === "download-history-thumb") {
+        downloadRowAsset(state.archives[target.dataset.month].rows[index], "thumb", index);
+      }
+      if (action === "restore") {
+        const month = target.dataset.month;
+        state.active = structuredClone(state.archives[month]);
+        render();
+        await persistState(`${formatMonth(month)}を編集画面へ戻しました`);
+      }
+      if (action === "delete-history") {
+        const month = target.dataset.month;
+        if (!confirm(`${formatMonth(month)}の履歴を削除しますか？`)) return;
+        delete state.archives[month];
+        render();
+        await persistState("履歴を削除しました");
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-history-preview]");
+      if (!target) return;
+      const snapshot = state.archives[target.dataset.historyPreview];
+      openMedia(snapshot.rows[Number(target.dataset.index)]);
+    });
+
+    mediaDialog.addEventListener("click", (event) => {
+      if (event.target === mediaDialog) mediaDialog.close();
+    });
+    mediaDialog.addEventListener("close", () => {
+      mediaVideo.pause();
+      mediaVideo.removeAttribute("src");
+    });
+
+    $("#archiveCurrent").addEventListener("click", async () => {
+      state.archives[state.active.month] = structuredClone(state.active);
+      render();
+      await persistState(`${formatMonth(state.active.month)}を履歴に保存しました`);
+    });
+
+    $("#newMonth").addEventListener("click", () => {
+      const current = new Date(`${state.active.month}-01T00:00:00`);
+      current.setMonth(current.getMonth() + 1);
+      $("#newMonthValue").value = current.toISOString().slice(0, 7);
+      newMonthDialog.showModal();
+    });
+    $("#closeNewMonth").addEventListener("click", () => newMonthDialog.close());
+    $("#cancelNewMonth").addEventListener("click", () => newMonthDialog.close());
+    $("#newMonthForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      state.active = blankMonth($("#newMonthValue").value);
+      newMonthDialog.close();
+      render();
+      await persistState("新しい月の6枠を作りました");
+    });
+
+    function moveMonth(amount) {
+      const date = new Date(`${state.active.month}-01T00:00:00`);
+      date.setMonth(date.getMonth() + amount);
+      const month = date.toISOString().slice(0, 7);
+      if (state.archives[month]) {
+        state.active = structuredClone(state.archives[month]);
+        render();
+        persistState(`${formatMonth(month)}を表示しました`);
+      } else {
+        showToast("その月は履歴にありません");
+      }
+    }
+
+    $("#prevMonth").addEventListener("click", () => moveMonth(-1));
+    $("#nextMonth").addEventListener("click", () => moveMonth(1));
+    monthPicker.addEventListener("change", () => {
+      const month = monthPicker.value;
+      if (month === state.active.month) return;
+      if (state.archives[month]) {
+        state.active = structuredClone(state.archives[month]);
+        render();
+        persistState(`${formatMonth(month)}を表示しました`);
+      } else {
+        monthPicker.value = state.active.month;
+        showToast("その月は履歴にありません");
+      }
+    });
+
+    $("#reloadState").addEventListener("click", () => loadState());
+
+    (async function boot() {
+      try {
+        const initial = await api("/api/state");
+        state = initial;
+        lastServerRevision = Number(initial.revision || 0);
+        lock.hidden = true;
+        render();
+      } catch {
+        lock.hidden = false;
+      }
+    })();
+
+    setInterval(async () => {
+      if (!state || hasLocalChanges || lock.hidden === false) return;
+      try {
+        const latest = await api("/api/state");
+        if (Number(latest.revision || 0) > lastServerRevision) {
+          state = latest;
+          lastServerRevision = Number(latest.revision || 0);
+          render();
+          showToast("ほかの人の変更を反映しました");
+        }
+        setConnection(true);
+      } catch {
+        setConnection(false);
+      }
+    }, 4000);
+  </script>
+</body>
+</html>
