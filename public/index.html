@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
+  <meta name="robots" content="noindex,nofollow">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>代表動画 投稿スケジューラー</title>
   <style>
@@ -20,7 +21,6 @@
     }
 
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
       color: var(--ink);
@@ -51,7 +51,6 @@
     .brand { min-width: 0; }
     .brand strong { display: block; font-size: 20px; line-height: 1.25; }
     .brand span { color: #b7c6ce; font-size: 12px; }
-
     .top-actions { display: flex; align-items: center; gap: 8px; }
 
     .icon-button, .button {
@@ -68,11 +67,10 @@
       padding: 0;
       color: #fff;
       background: #31404a;
-      font-size: 20px;
+      font-size: 18px;
     }
 
     .icon-button:hover { background: #40525e; }
-
     .button {
       display: inline-flex;
       align-items: center;
@@ -119,10 +117,15 @@
       margin-bottom: 18px;
     }
 
-    .month-nav {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .month-nav { display: flex; align-items: center; gap: 8px; }
+    .month-nav input {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 800;
     }
 
     .month-title { min-width: 0; text-align: center; }
@@ -344,7 +347,6 @@
     }
 
     .history-list { display: grid; gap: 10px; }
-
     .history-month {
       overflow: hidden;
       border: 1px solid var(--line);
@@ -364,7 +366,7 @@
 
     .history-month summary span { color: var(--muted); font-size: 12px; }
     .history-content { padding: 0 14px 14px; }
-    .history-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+    .history-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     .empty { padding: 24px; color: var(--muted); text-align: center; }
 
     dialog {
@@ -380,7 +382,6 @@
     }
 
     dialog::backdrop { background: rgba(18, 28, 34, .62); }
-
     .dialog-head {
       position: sticky;
       z-index: 2;
@@ -499,12 +500,7 @@
       .video-card { grid-template-columns: minmax(118px, 38%) minmax(0, 1fr); min-height: 292px; }
       .visual, .visual img, .visual-placeholder { min-height: 292px; }
       .date-control { grid-template-columns: 1fr 1fr; }
-      .date-control input {
-        grid-column: 1 / -1;
-        grid-row: 1;
-        padding: 7px 5px;
-        font-size: 13px;
-      }
+      .date-control input { grid-column: 1 / -1; grid-row: 1; padding: 7px 5px; font-size: 13px; }
       .date-control .step { grid-row: 2; }
       .section-head { align-items: stretch; flex-direction: column; }
       .section-actions { justify-content: flex-start; }
@@ -518,7 +514,7 @@
   <div class="lock" id="lock">
     <form class="lock-panel" id="loginForm">
       <h1>代表動画スケジューラー</h1>
-      <p>共有パスワードを入力してください</p>
+      <p>共有パスワードを入力してください。</p>
       <input id="passcode" type="password" autocomplete="current-password" aria-label="共有パスワード">
       <button class="button primary" type="submit">ログイン</button>
       <div class="error" id="loginError"></div>
@@ -528,7 +524,7 @@
   <header class="topbar">
     <div class="brand">
       <strong>代表動画 投稿スケジューラー</strong>
-      <span>共有データ版</span>
+      <span>リンクとパスワードを知っている人だけが編集できます</span>
     </div>
     <div class="top-actions">
       <span class="connection" id="connection">共有中</span>
@@ -553,12 +549,14 @@
     <section>
       <div class="section-head">
         <div>
-          <h2>今月の6本</h2>
-          <p>サムネを押すと動画を確認できます</p>
+          <h2>今月の動画</h2>
+          <p>普段は6本。必要な時だけ枠を追加できます。</p>
         </div>
         <div class="section-actions">
-          <button class="button primary" id="archiveCurrent" type="button">この月を履歴に保存</button>
-          <button class="button secondary" id="newMonth" type="button">新しい月を作る</button>
+          <button class="button secondary" id="addSlot" type="button">枠を追加</button>
+          <button class="button danger" id="clearCurrent" type="button">今月を全削除</button>
+          <button class="button primary" id="archiveCurrent" type="button">履歴に保存</button>
+          <button class="button secondary" id="newMonth" type="button">新しい月</button>
         </div>
       </div>
       <div class="video-grid" id="videoGrid"></div>
@@ -568,7 +566,7 @@
       <div class="section-head">
         <div>
           <h2>投稿カレンダー</h2>
-          <p>日付欄または左右のボタンで変更できます</p>
+          <p>日付とタイトルはここでも編集できます。</p>
         </div>
       </div>
       <div class="schedule-band" id="scheduleList"></div>
@@ -578,7 +576,7 @@
       <div class="section-head">
         <div>
           <h2>過去の履歴</h2>
-          <p>保存・復元・削除をここで管理します</p>
+          <p>保存した月の確認、復元、削除ができます。</p>
         </div>
       </div>
       <div class="history-list" id="historyList"></div>
@@ -594,7 +592,7 @@
       <div class="dialog-body">
         <div class="field-grid">
           <div class="field">
-            <label for="shootDate">収録日</label>
+            <label for="shootDate">撮影日</label>
             <input id="shootDate" type="date">
           </div>
           <div class="field">
@@ -652,7 +650,7 @@
       </div>
       <div class="dialog-footer">
         <button class="button secondary" id="cancelNewMonth" type="button">キャンセル</button>
-        <button class="button primary" type="submit">6本の枠を作る</button>
+        <button class="button primary" type="submit">6枠を作る</button>
       </div>
     </form>
   </dialog>
@@ -797,7 +795,7 @@
       monthPicker.value = active.month;
       $("#monthTitle").textContent = formatMonth(active.month);
       $("#monthSummary").textContent =
-        `${rows.length}本・${active.channel || "投稿先未設定"}・収録 ${formatDate(active.shootDate)}`;
+        `${rows.length}本・${active.channel || "投稿先未設定"}・撮影 ${formatDate(active.shootDate)}`;
 
       videoGrid.innerHTML = rows.map((row, index) => {
         const thumb = thumbSource(row);
@@ -806,7 +804,7 @@
           <article class="video-card" data-index="${index}">
             <button class="visual" type="button" data-action="preview" data-index="${index}" aria-label="No.${index + 1}を確認">
               ${thumb
-                ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネ">`
+                ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">`
                 : `<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`}
               ${video ? `<span class="play">▶</span>` : ""}
             </button>
@@ -855,7 +853,7 @@
             <article class="video-card">
               <button class="visual" type="button" data-history-preview="${escapeHtml(snapshot.month)}" data-index="${index}">
                 ${thumbSource(row)
-                  ? `<img src="${escapeHtml(thumbSource(row))}" alt="${escapeHtml(row.title)}のサムネ">`
+                  ? `<img src="${escapeHtml(thumbSource(row))}" alt="${escapeHtml(row.title)}のサムネイル">`
                   : `<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`}
                 ${videoSource(row) ? `<span class="play">▶</span>` : ""}
               </button>
@@ -909,7 +907,7 @@
         mediaVideo.hidden = false;
       } else if (thumb) {
         mediaImage.src = thumb;
-        mediaImage.alt = `${row.title}のサムネ`;
+        mediaImage.alt = `${row.title}のサムネイル`;
         mediaImage.hidden = false;
       } else {
         showToast("動画・サムネがまだありません");
@@ -945,8 +943,12 @@
       }
     }
 
+    function safeFileTitle(row, index) {
+      return String(row.title || `動画${index + 1}`).replace(/[\\/:*?"<>|]/g, "_");
+    }
+
     function downloadRowAsset(row, kind, index) {
-      const title = String(row.title || `動画${index + 1}`).replace(/[\\/:*?"<>|]/g, "_");
+      const title = safeFileTitle(row, index);
       if (kind === "video") {
         const url = videoSource(row);
         downloadAsset(url, `${title}_動画${extensionFromUrl(url, ".mp4")}`);
@@ -965,7 +967,23 @@
       $("#titles").value = (active.rows || []).map((row) => row.title).join("\n");
     }
 
-    function blankMonth(month) {
+    function blankRow(index, date) {
+      return {
+        postDate: date,
+        title: `動画${index + 1}`,
+        memo: "",
+        ready: false,
+        thumbData: "",
+        thumbUrl: "",
+        thumbName: "",
+        videoData: "",
+        videoUrl: "",
+        videoFileName: "",
+        videoPreviewUrl: ""
+      };
+    }
+
+    function blankMonth(month, count = 6) {
       const [year, monthNumber] = month.split("-").map(Number);
       const dateValue = (day) => {
         const date = new Date(year, monthNumber - 1, day);
@@ -976,19 +994,9 @@
         shootDate: dateValue(5),
         startDate: dateValue(8),
         interval: "7",
-        channel: state.active.channel || "YouTube",
+        channel: state?.active?.channel || "YouTube",
         titles: "",
-        rows: Array.from({ length: 6 }, (_, index) => ({
-          postDate: dateValue(8 + index * 7),
-          title: `動画${index + 1}`,
-          memo: "",
-          ready: false,
-          thumbData: "",
-          thumbUrl: "",
-          thumbName: "",
-          videoUrl: "",
-          videoFileName: ""
-        }))
+        rows: Array.from({ length: count }, (_, index) => blankRow(index, dateValue(8 + index * 7)))
       };
     }
 
@@ -1013,13 +1021,14 @@
           row.videoUrl = result.url;
           row.videoFileName = file.name;
           row.videoData = "";
+          row.videoPreviewUrl = "";
         } else {
           row.thumbUrl = result.url;
           row.thumbName = file.name;
           row.thumbData = "";
         }
         render();
-        await persistState("全員に反映しました");
+        await persistState("全員の画面に反映しました");
       } catch (error) {
         showToast(error.message);
       }
@@ -1135,6 +1144,25 @@
     mediaDialog.addEventListener("close", () => {
       mediaVideo.pause();
       mediaVideo.removeAttribute("src");
+    });
+
+    $("#addSlot").addEventListener("click", async () => {
+      const rows = state.active.rows;
+      const interval = Number(state.active.interval || 7);
+      const lastDate = rows.at(-1)?.postDate || state.active.startDate || `${state.active.month}-01`;
+      rows.push(blankRow(rows.length, addDays(lastDate, interval)));
+      render();
+      await persistState("枠を追加しました");
+    });
+
+    $("#clearCurrent").addEventListener("click", async () => {
+      if (!confirm(`${formatMonth(state.active.month)}の動画とサムネを全て削除しますか？`)) return;
+      state.active.rows = state.active.rows.map((row, index) => ({
+        ...blankRow(index, row.postDate),
+        postDate: row.postDate
+      }));
+      render();
+      await persistState("今月の中身を全削除しました");
     });
 
     $("#archiveCurrent").addEventListener("click", async () => {
