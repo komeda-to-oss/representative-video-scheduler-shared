@@ -433,13 +433,38 @@
     .field textarea { min-height: 118px; resize: vertical; }
     .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-    .media-dialog { width: min(520px, calc(100% - 24px)); background: #101719; }
+    .media-dialog {
+      width: min(920px, calc(100% - 24px));
+      color: #fff;
+      background: #101719;
+    }
+
+    .media-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, .12);
+      background: #172029;
+    }
+
+    .media-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .media-head .icon-button { flex: 0 0 auto; }
+    .media-body { position: relative; background: #101719; }
     .media-dialog video, .media-dialog img {
       display: block;
       width: 100%;
-      max-height: calc(100vh - 100px);
+      max-height: calc(100vh - 145px);
       object-fit: contain;
       background: #101719;
+    }
+
+    .media-status {
+      padding: 12px 14px;
+      color: #d8e3e8;
+      background: #172029;
+      font-size: 13px;
     }
 
     .lock {
@@ -642,8 +667,15 @@
   </dialog>
 
   <dialog class="media-dialog" id="mediaDialog">
-    <video id="mediaVideo" controls playsinline hidden></video>
-    <img id="mediaImage" alt="" hidden>
+    <div class="media-head">
+      <strong id="mediaTitle">プレビュー</strong>
+      <button class="icon-button" id="closeMedia" type="button" aria-label="閉じる">x</button>
+    </div>
+    <div class="media-body">
+      <video id="mediaVideo" controls playsinline preload="auto" hidden></video>
+      <img id="mediaImage" alt="" hidden>
+      <div class="media-status" id="mediaStatus" hidden></div>
+    </div>
   </dialog>
 
   <dialog id="newMonthDialog">
@@ -689,6 +721,8 @@
     const mediaDialog = $("#mediaDialog");
     const mediaVideo = $("#mediaVideo");
     const mediaImage = $("#mediaImage");
+    const mediaTitle = $("#mediaTitle");
+    const mediaStatus = $("#mediaStatus");
     const connection = $("#connection");
     const toast = $("#toast");
 
@@ -941,6 +975,27 @@
       return row.videoPlaybackUrl || cloudinaryVideoPlaybackUrl(videoSource(row));
     }
 
+    function videoPlaybackSources(row) {
+      return [...new Set([
+        row.videoPlaybackUrl || "",
+        cloudinaryVideoPlaybackUrl(videoSource(row)),
+        videoSource(row)
+      ].filter(Boolean))];
+    }
+
+    function videoMimeType(url) {
+      const clean = String(url || "").split("?")[0].toLowerCase();
+      if (clean.includes("/f_mp4,") || clean.endsWith(".mp4")) return "video/mp4";
+      if (clean.endsWith(".webm")) return "video/webm";
+      if (clean.endsWith(".mov") || clean.endsWith(".m4v")) return "video/mp4";
+      return "";
+    }
+
+    function setMediaStatus(message) {
+      mediaStatus.textContent = message || "";
+      mediaStatus.hidden = !message;
+    }
+
     function thumbSource(row) {
       return row.thumbUrl || "";
     }
@@ -1057,16 +1112,35 @@
     }
 
     function openMedia(row) {
-      const video = videoPlaybackSource(row);
+      const videos = videoPlaybackSources(row);
       const thumb = thumbSource(row);
       mediaVideo.pause();
       mediaVideo.hidden = true;
       mediaImage.hidden = true;
+      mediaVideo.innerHTML = "";
       mediaVideo.removeAttribute("src");
+      mediaVideo.removeAttribute("poster");
       mediaImage.removeAttribute("src");
-      if (video) {
-        mediaVideo.src = video;
+      mediaTitle.textContent = row.title || "プレビュー";
+      setMediaStatus("");
+      if (videos.length) {
+        videos.forEach((url) => {
+          const source = document.createElement("source");
+          source.src = url;
+          const type = videoMimeType(url);
+          if (type) source.type = type;
+          mediaVideo.appendChild(source);
+        });
+        if (thumb) mediaVideo.poster = thumb;
         mediaVideo.hidden = false;
+        setMediaStatus("動画を読み込んでいます。再生ボタンでアプリ内再生できます");
+        mediaDialog.showModal();
+        mediaVideo.load();
+        const playAttempt = mediaVideo.play();
+        if (playAttempt?.catch) {
+          playAttempt.catch(() => setMediaStatus("再生ボタンを押すとアプリ内で再生できます"));
+        }
+        return;
       } else if (thumb) {
         mediaImage.src = thumb;
         mediaImage.alt = `${row.title}のサムネイル`;
@@ -1298,12 +1372,21 @@
     mediaDialog.addEventListener("click", (event) => {
       if (event.target === mediaDialog) mediaDialog.close();
     });
+    $("#closeMedia").addEventListener("click", () => mediaDialog.close());
     mediaDialog.addEventListener("close", () => {
       mediaVideo.pause();
+      mediaVideo.innerHTML = "";
       mediaVideo.removeAttribute("src");
+      mediaVideo.removeAttribute("poster");
+      setMediaStatus("");
+    });
+    mediaVideo.addEventListener("loadedmetadata", () => setMediaStatus(""));
+    mediaVideo.addEventListener("playing", () => setMediaStatus(""));
+    mediaVideo.addEventListener("waiting", () => {
+      if (!mediaVideo.hidden) setMediaStatus("動画を読み込んでいます");
     });
     mediaVideo.addEventListener("error", () => {
-      if (!mediaVideo.hidden) showToast("動画を再生できませんでした。動画保存から確認してください");
+      if (!mediaVideo.hidden) setMediaStatus("動画を再生準備中です。少し待ってから更新してもう一度開いてください");
     });
 
     $("#addSlot").addEventListener("click", async () => {
