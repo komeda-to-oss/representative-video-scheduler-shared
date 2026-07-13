@@ -927,13 +927,27 @@
       return row.videoUrl || "";
     }
 
+    function cloudinaryVideoPlaybackUrl(url) {
+      const value = String(url || "");
+      if (!value.includes("/video/upload/")) return value;
+      const [clean, suffix = ""] = value.split(/(?=[?#])/);
+      const transformed = clean
+        .replace("/video/upload/", "/video/upload/f_mp4,vc_auto,q_auto/")
+        .replace(/\.(mov|m4v|avi|mkv|webm|3gp)$/i, ".mp4");
+      return `${transformed}${suffix}`;
+    }
+
+    function videoPlaybackSource(row) {
+      return row.videoPlaybackUrl || cloudinaryVideoPlaybackUrl(videoSource(row));
+    }
+
     function thumbSource(row) {
       return row.thumbUrl || "";
     }
 
     function renderVisual(row, index) {
       const thumb = thumbSource(row);
-      const video = videoSource(row);
+      const video = videoPlaybackSource(row);
       if (thumb) {
         return `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">${video ? `<span class="play">▶</span>` : ""}`;
       }
@@ -1043,7 +1057,7 @@
     }
 
     function openMedia(row) {
-      const video = videoSource(row);
+      const video = videoPlaybackSource(row);
       const thumb = thumbSource(row);
       mediaVideo.pause();
       mediaVideo.hidden = true;
@@ -1134,11 +1148,12 @@
         form.append("upload_preset", CLOUDINARY.uploadPreset);
         form.append("public_id", `${CLOUDINARY.mediaBase}${unique}`);
         form.append("tags", `representative-video-scheduler,${kind}`);
-        const response = await fetch(uploadUrl("auto"), { method: "POST", body: form });
+        const response = await fetch(uploadUrl(kind === "video" ? "video" : "image"), { method: "POST", body: form });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
         if (kind === "video") {
           row.videoUrl = result.secure_url;
+          row.videoPlaybackUrl = cloudinaryVideoPlaybackUrl(result.secure_url);
           row.videoFileName = file.name;
         } else {
           row.thumbUrl = result.secure_url;
@@ -1254,6 +1269,9 @@
     mediaDialog.addEventListener("close", () => {
       mediaVideo.pause();
       mediaVideo.removeAttribute("src");
+    });
+    mediaVideo.addEventListener("error", () => {
+      if (!mediaVideo.hidden) showToast("動画を再生できませんでした。動画保存から確認してください");
     });
 
     $("#addSlot").addEventListener("click", async () => {
