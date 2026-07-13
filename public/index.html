@@ -772,11 +772,11 @@
       })[char]);
     }
 
-    function showToast(message) {
+    function showToast(message, duration = 2600) {
       toast.textContent = message;
       toast.classList.add("show");
       window.clearTimeout(showToast.timer);
-      showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2600);
+      showToast.timer = window.setTimeout(() => toast.classList.remove("show"), duration);
     }
 
     function setConnection(mode, label) {
@@ -1210,14 +1210,14 @@
       form.append("upload_preset", CLOUDINARY.uploadPreset);
       form.append("public_id", publicId);
       form.append("tags", `representative-video-scheduler,${kind}`);
-      const response = await fetch(uploadUrl(kind === "video" ? "video" : "image"), { method: "POST", body: form });
+      const response = await fetch(uploadUrl("auto"), { method: "POST", body: form });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
       return result;
     }
 
     async function uploadVideoInChunks(file, publicId, safeName) {
-      const chunkSize = 20 * 1024 * 1024;
+      const chunkSize = 8 * 1024 * 1024;
       const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       let result = null;
       for (let start = 0; start < file.size; start += chunkSize) {
@@ -1227,7 +1227,7 @@
         form.append("upload_preset", CLOUDINARY.uploadPreset);
         form.append("public_id", publicId);
         form.append("tags", "representative-video-scheduler,video");
-        const response = await fetch(uploadUrl("video"), {
+        const response = await fetch(uploadUrl("auto"), {
           method: "POST",
           headers: {
             "Content-Range": `bytes ${start}-${end - 1}/${file.size}`,
@@ -1239,7 +1239,7 @@
         if (!response.ok) throw new Error(result.error?.message || "分割アップロードに失敗しました");
         const percent = Math.max(1, Math.round((end / file.size) * 100));
         setConnection("saving", `保存中 ${percent}%`);
-        showToast(`動画をアップロード中 ${percent}%`);
+        showToast(`動画をアップロード中 ${percent}%`, 1800);
       }
       if (!result?.secure_url) throw new Error("動画URLを取得できませんでした");
       return result;
@@ -1269,7 +1269,7 @@
         await persistState("アップロードを全員の画面に反映しました");
       } catch (error) {
         setConnection("offline", "保存失敗");
-        showToast(error.message || "アップロードに失敗しました");
+        showToast(`アップロード失敗: ${error.message || "もう一度試してください"}`, 9000);
       }
     }
 
