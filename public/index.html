@@ -301,14 +301,18 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      width: 100%;
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 6px;
       padding: 7px;
       background: #f7f9fa;
+      color: inherit;
+      font-family: inherit;
       font-size: 12px;
       font-weight: 800;
       cursor: pointer;
+      appearance: none;
     }
 
     .file-label input { display: none; }
@@ -1042,8 +1046,8 @@
                 <button class="step" type="button" data-action="date-step" data-amount="1" data-index="${index}" aria-label="1日後">+</button>
               </div>
               <div class="file-actions">
-                <label class="file-label">動画を変更<input type="file" accept="video/*" data-upload="video" data-index="${index}"></label>
-                <label class="file-label">サムネ変更<input type="file" accept="image/*" data-upload="thumb" data-index="${index}"></label>
+                <button class="file-label" type="button" data-action="widget-upload" data-kind="video" data-index="${index}">動画を変更</button>
+                <button class="file-label" type="button" data-action="widget-upload" data-kind="thumb" data-index="${index}">サムネ変更</button>
                 <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${video ? "" : "disabled"}>動画保存</button>
                 <button class="download-button" type="button" data-action="download-thumb" data-index="${index}" ${thumb ? "" : "disabled"}>サムネ保存</button>
               </div>
@@ -1204,19 +1208,121 @@
       $("#titles").value = (active.rows || []).map((row) => row.title).join("\n");
     }
 
-    async function uploadDirect(file, kind, publicId, safeName) {
+    const uploadKindName = (kind) => kind === "video" ? "動画" : "サムネ";
+    let uploadWidgetScriptPromise = null;
+
+    function loadUploadWidget() {
+      if (window.cloudinary?.createUploadWidget) return Promise.resolve();
+      if (uploadWidgetScriptPromise) return uploadWidgetScriptPromise;
+      uploadWidgetScriptPromise = new Promise((resolve, reject) => {
+        const existing = document.querySelector("script[data-cloudinary-widget]");
+        if (existing) {
+          existing.addEventListener("load", resolve, { once: true });
+          existing.addEventListener("error", () => reject(new Error("アップロード画面を読み込めませんでした")), { once: true });
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://upload-widget.cloudinary.com/global/all.js";
+        script.async = true;
+        script.dataset.cloudinaryWidget = "true";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("アップロード画面を読み込めませんでした"));
+        document.head.appendChild(script);
+      }).then(() => {
+        if (!window.cloudinary?.createUploadWidget) throw new Error("アップロード画面を起動できませんでした");
+      });
+      return uploadWidgetScriptPromise;
+    }
+
+    function applyUploadedAsset(row, kind, info, fileName) {
+      if (kind === "video") {
+        row.videoUrl = info.secure_url;
+        row.videoPlaybackUrl = cloudinaryVideoPlaybackUrl(info.secure_url);
+        row.videoFileName = fileName || info.original_filename || info.display_name || info.public_id || "video";
+      } else {
+        row.thumbUrl = info.secure_url;
+        row.thumbName = fileName || info.original_filename || info.display_name || info.public_id || "thumbnail";
+      }
+    }
+
+    function fallbackFilePick(kind, index) {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = kind === "video" ? "video/*" : "image/*";
+      input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        if (file) uploadFile(file, kind, index);
+      }, { once: true });
+      input.click();
+    }
+
+    async function openUploadWidget(kind, index) {
+      const row = state.active.rows[index];
+      if (!row) return;
+      showToast(`${uploadKindName(kind)}アップロード画面を開きます`, 3000);
+      try {
+        await loadUploadWidget();
+      } catch (error) {
+        showToast("通常アップロードに切り替えます", 3000);
+        fallbackFilePick(kind, index);
+        return;
+      }
+
+      let completed = false;
+      const widget = window.cloudinary.createUploadWidget({
+        cloudName: CLOUDINARY.cloudName,
+        uploadPreset: CLOUDINARY.uploadPreset,
+        sources: ["local"],
+        multiple: false,
+        maxFiles: 1,
+        resourceType: kind === "video" ? "video" : "image",
+        clientAllowedFormats: kind === "video" ? ["mp4", "mov", "m4v", "webm"] : ["jpg", "jpeg", "png", "webp"],
+        showAdvancedOptions: false,
+        cropping: false
+      }, async (error, result) => {
+        if (error) {
+          setConnection("offline", "保存失敗");
+          showToast(`アップロード失敗: ${error.message || error.statusText || "Cloudinaryで失敗しました"}`, 9000);
+          return;
+        }
+        if (!result) return;
+        if (result.event === "queues-start") {
+          setConnection("saving", "アップロード中");
+          showToast(`${uploadKindName(kind)}をアップロード中です`, 2600);
+        }
+        if (result.event !== "success" || completed) return;
+        completed = true;
+        const info = result.info || {};
+        if (!info.secure_url) {
+          setConnection("offline", "保存失敗");
+          showToast("アップロード失敗: URLを取得できませんでした", 9000);
+          return;
+        }
+        try {
+          const latestRow = state.active.rows[index];
+          applyUploadedAsset(latestRow, kind, info, info.original_filename || info.display_name);
+          render();
+          await persistState("アップロードを全員の画面に反映しました");
+          widget.close({ quiet: true });
+        } catch (saveError) {
+          setConnection("offline", "保存失敗");
+          showToast(`アップロード後の保存失敗: ${saveError.message || "もう一度試してください"}`, 9000);
+        }
+      });
+      widget.open();
+    }
+
+    async function uploadDirect(file, kind, safeName) {
       const form = new FormData();
       form.append("file", file, safeName);
       form.append("upload_preset", CLOUDINARY.uploadPreset);
-      form.append("public_id", publicId);
-      form.append("tags", `representative-video-scheduler,${kind}`);
       const response = await fetch(uploadUrl("auto"), { method: "POST", body: form });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
       return result;
     }
 
-    async function uploadVideoInChunks(file, publicId, safeName) {
+    async function uploadVideoInChunks(file, safeName) {
       const chunkSize = 8 * 1024 * 1024;
       const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       let result = null;
@@ -1225,8 +1331,6 @@
         const form = new FormData();
         form.append("file", file.slice(start, end), safeName);
         form.append("upload_preset", CLOUDINARY.uploadPreset);
-        form.append("public_id", publicId);
-        form.append("tags", "representative-video-scheduler,video");
         const response = await fetch(uploadUrl("auto"), {
           method: "POST",
           headers: {
@@ -1252,19 +1356,10 @@
         const active = state.active;
         const row = active.rows[index];
         const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
-        const unique = `${active.month}-slot-${index + 1}-${kind}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const publicId = `${CLOUDINARY.mediaBase}${unique}`;
         const result = kind === "video" && file.size > 95 * 1024 * 1024
-          ? await uploadVideoInChunks(file, publicId, safeName)
-          : await uploadDirect(file, kind, publicId, safeName);
-        if (kind === "video") {
-          row.videoUrl = result.secure_url;
-          row.videoPlaybackUrl = cloudinaryVideoPlaybackUrl(result.secure_url);
-          row.videoFileName = file.name;
-        } else {
-          row.thumbUrl = result.secure_url;
-          row.thumbName = file.name;
-        }
+          ? await uploadVideoInChunks(file, safeName)
+          : await uploadDirect(file, kind, safeName);
+        applyUploadedAsset(row, kind, result, file.name);
         render();
         await persistState("アップロードを全員の画面に反映しました");
       } catch (error) {
@@ -1332,6 +1427,11 @@
       if (!target) return;
       const action = target.dataset.action;
       const index = Number(target.dataset.index);
+      if (action === "widget-upload") {
+        event.preventDefault();
+        await openUploadWidget(target.dataset.kind, index);
+        return;
+      }
       if (action === "preview") openMedia(state.active.rows[index]);
       if (action === "ready") {
         state.active.rows[index].ready = !state.active.rows[index].ready;
