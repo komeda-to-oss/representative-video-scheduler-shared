@@ -1130,12 +1130,48 @@
       $("#titles").value = (active.rows || []).map((row) => row.title).join("\n");
     }
 
-    async function uploadFile(file, kind, index) {
-      const limit = 100 * 1024 * 1024;
-      if (file.size > limit) {
-        showToast("100MB以下のファイルを選んでください");
-        return;
+    async function uploadDirect(file, kind, publicId, safeName) {
+      const form = new FormData();
+      form.append("file", file, safeName);
+      form.append("upload_preset", CLOUDINARY.uploadPreset);
+      form.append("public_id", publicId);
+      form.append("tags", `representative-video-scheduler,${kind}`);
+      const response = await fetch(uploadUrl(kind === "video" ? "video" : "image"), { method: "POST", body: form });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
+      return result;
+    }
+
+    async function uploadVideoInChunks(file, publicId, safeName) {
+      const chunkSize = 20 * 1024 * 1024;
+      const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let result = null;
+      for (let start = 0; start < file.size; start += chunkSize) {
+        const end = Math.min(start + chunkSize, file.size);
+        const form = new FormData();
+        form.append("file", file.slice(start, end), safeName);
+        form.append("upload_preset", CLOUDINARY.uploadPreset);
+        form.append("public_id", publicId);
+        form.append("tags", "representative-video-scheduler,video");
+        const response = await fetch(uploadUrl("video"), {
+          method: "POST",
+          headers: {
+            "Content-Range": `bytes ${start}-${end - 1}/${file.size}`,
+            "X-Unique-Upload-Id": uploadId
+          },
+          body: form
+        });
+        result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error?.message || "分割アップロードに失敗しました");
+        const percent = Math.max(1, Math.round((end / file.size) * 100));
+        setConnection("saving", `保存中 ${percent}%`);
+        showToast(`動画をアップロード中 ${percent}%`);
       }
+      if (!result?.secure_url) throw new Error("動画URLを取得できませんでした");
+      return result;
+    }
+
+    async function uploadFile(file, kind, index) {
       showToast(`${kind === "video" ? "動画" : "サムネ"}をアップロード中です`);
       setConnection("saving", "保存中");
       try {
@@ -1143,14 +1179,10 @@
         const row = active.rows[index];
         const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
         const unique = `${active.month}-slot-${index + 1}-${kind}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const form = new FormData();
-        form.append("file", file, safeName);
-        form.append("upload_preset", CLOUDINARY.uploadPreset);
-        form.append("public_id", `${CLOUDINARY.mediaBase}${unique}`);
-        form.append("tags", `representative-video-scheduler,${kind}`);
-        const response = await fetch(uploadUrl(kind === "video" ? "video" : "image"), { method: "POST", body: form });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
+        const publicId = `${CLOUDINARY.mediaBase}${unique}`;
+        const result = kind === "video" && file.size > 95 * 1024 * 1024
+          ? await uploadVideoInChunks(file, publicId, safeName)
+          : await uploadDirect(file, kind, publicId, safeName);
         if (kind === "video") {
           row.videoUrl = result.secure_url;
           row.videoPlaybackUrl = cloudinaryVideoPlaybackUrl(result.secure_url);
