@@ -704,6 +704,11 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
+    const APP_BUILD = "2026-07-14-upload-widget-2";
+    if (location.pathname.endsWith("/public/")) {
+      location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
+    }
+
     const CLOUDINARY = {
       cloudName: "bzjc7oyt",
       uploadPreset: "scheduler_shared_uploads",
