@@ -704,7 +704,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-14-upload-widget-2";
+    const APP_BUILD = "2026-07-14-video-compress-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -716,6 +716,8 @@
       stateBase: "representative-video-scheduler/state/state-",
       mediaBase: "representative-video-scheduler/media/"
     };
+    const MAX_DIRECT_UPLOAD_BYTES = 95 * 1024 * 1024;
+    const VIDEO_COMPRESS_TARGET_BYTES = 72 * 1024 * 1024;
 
     const $ = (selector) => document.querySelector(selector);
     const lock = $("#lock");
@@ -1264,6 +1266,11 @@
     async function openUploadWidget(kind, index) {
       const row = state.active.rows[index];
       if (!row) return;
+      if (kind === "video") {
+        showToast("動画を選んでください。100MB超えは自動で圧縮します", 5000);
+        fallbackFilePick(kind, index);
+        return;
+      }
       showToast(`${uploadKindName(kind)}アップロード画面を開きます`, 3000);
       try {
         await loadUploadWidget();
@@ -1327,31 +1334,114 @@
       return result;
     }
 
-    async function uploadVideoInChunks(file, safeName) {
-      const chunkSize = 8 * 1024 * 1024;
-      const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      let result = null;
-      for (let start = 0; start < file.size; start += chunkSize) {
-        const end = Math.min(start + chunkSize, file.size);
-        const form = new FormData();
-        form.append("file", file.slice(start, end), safeName);
-        form.append("upload_preset", CLOUDINARY.uploadPreset);
-        const response = await fetch(uploadUrl("auto"), {
-          method: "POST",
-          headers: {
-            "Content-Range": `bytes ${start}-${end - 1}/${file.size}`,
-            "X-Unique-Upload-Id": uploadId
-          },
-          body: form
+    function supportedRecorderType() {
+      const types = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm"
+      ];
+      return types.find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || "";
+    }
+
+    function safeVideoName(name) {
+      return `${String(name || "video").replace(/\.[^.]+$/, "").replace(/[^\w.\-]+/g, "_").slice(-70)}.webm`;
+    }
+
+    function canvasSizeForVideo(video) {
+      const width = video.videoWidth || 720;
+      const height = video.videoHeight || 1280;
+      const maxSide = 720;
+      const ratio = Math.min(1, maxSide / Math.max(width, height));
+      const even = (value) => Math.max(2, Math.round(value / 2) * 2);
+      return { width: even(width * ratio), height: even(height * ratio) };
+    }
+
+    async function compressVideoFile(file) {
+      if (!window.MediaRecorder) throw new Error("このブラウザでは100MB超え動画の圧縮ができません");
+      const mimeType = supportedRecorderType();
+      if (!mimeType) throw new Error("このブラウザでは動画圧縮形式に対応していません");
+
+      const objectUrl = URL.createObjectURL(file);
+      const video = document.createElement("video");
+      video.src = objectUrl;
+      video.preload = "auto";
+      video.playsInline = true;
+      video.muted = true;
+      video.style.position = "fixed";
+      video.style.left = "-9999px";
+      video.style.top = "0";
+      document.body.appendChild(video);
+
+      try {
+        await new Promise((resolve, reject) => {
+          video.onloadedmetadata = resolve;
+          video.onerror = () => reject(new Error("動画を読み込めませんでした"));
         });
-        result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error?.message || "分割アップロードに失敗しました");
-        const percent = Math.max(1, Math.round((end / file.size) * 100));
-        setConnection("saving", `保存中 ${percent}%`);
-        showToast(`動画をアップロード中 ${percent}%`, 1800);
+        const duration = Math.max(1, Number(video.duration) || 1);
+        const size = canvasSizeForVideo(video);
+        const canvas = document.createElement("canvas");
+        canvas.width = size.width;
+        canvas.height = size.height;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx || !canvas.captureStream) throw new Error("動画圧縮の準備に失敗しました");
+
+        const sourceStream = video.captureStream?.();
+        const canvasStream = canvas.captureStream(24);
+        const tracks = [...canvasStream.getVideoTracks(), ...(sourceStream?.getAudioTracks?.() || [])];
+        const mixedStream = new MediaStream(tracks);
+        const audioBitsPerSecond = 96 * 1000;
+        const totalBitsPerSecond = Math.floor((VIDEO_COMPRESS_TARGET_BYTES * 8) / duration);
+        const videoBitsPerSecond = Math.max(350 * 1000, Math.min(1600 * 1000, totalBitsPerSecond - audioBitsPerSecond));
+        const recorder = new MediaRecorder(mixedStream, {
+          mimeType,
+          videoBitsPerSecond,
+          audioBitsPerSecond
+        });
+        const chunks = [];
+        recorder.ondataavailable = (event) => {
+          if (event.data?.size) chunks.push(event.data);
+        };
+
+        let lastToast = 0;
+        let drawing = true;
+        const drawFrame = () => {
+          if (!drawing) return;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const percent = Math.min(99, Math.max(1, Math.round((video.currentTime / duration) * 100)));
+          setConnection("saving", `圧縮中 ${percent}%`);
+          if (Date.now() - lastToast > 5000) {
+            showToast(`100MB超えのため圧縮中 ${percent}%`, 6000);
+            lastToast = Date.now();
+          }
+          requestAnimationFrame(drawFrame);
+        };
+
+        const finished = new Promise((resolve, reject) => {
+          recorder.onerror = () => reject(new Error("動画圧縮に失敗しました"));
+          recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+          video.onended = () => {
+            drawing = false;
+            if (recorder.state !== "inactive") recorder.stop();
+          };
+        });
+
+        showToast("100MB超えのため動画を圧縮します。画面を閉じずに待ってください", 9000);
+        recorder.start(1000);
+        drawFrame();
+        await video.play();
+        const compressed = await finished;
+        tracks.forEach((track) => track.stop());
+        if (!compressed.size) throw new Error("圧縮後の動画を作れませんでした");
+        if (compressed.size > MAX_DIRECT_UPLOAD_BYTES) {
+          throw new Error(`圧縮後も${Math.round(compressed.size / 1024 / 1024)}MBあります。動画を短くして再度入れてください`);
+        }
+        showToast(`圧縮完了。アップロードします`, 5000);
+        return { blob: compressed, safeName: safeVideoName(file.name), displayName: safeVideoName(file.name) };
+      } finally {
+        video.pause();
+        video.remove();
+        URL.revokeObjectURL(objectUrl);
       }
-      if (!result?.secure_url) throw new Error("動画URLを取得できませんでした");
-      return result;
     }
 
     async function uploadFile(file, kind, index) {
@@ -1361,10 +1451,17 @@
         const active = state.active;
         const row = active.rows[index];
         const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
-        const result = kind === "video" && file.size > 95 * 1024 * 1024
-          ? await uploadVideoInChunks(file, safeName)
-          : await uploadDirect(file, kind, safeName);
-        applyUploadedAsset(row, kind, result, file.name);
+        let uploadBlob = file;
+        let uploadName = safeName;
+        let displayName = file.name;
+        if (kind === "video" && file.size > MAX_DIRECT_UPLOAD_BYTES) {
+          const compressed = await compressVideoFile(file);
+          uploadBlob = compressed.blob;
+          uploadName = compressed.safeName;
+          displayName = compressed.displayName;
+        }
+        const result = await uploadDirect(uploadBlob, kind, uploadName);
+        applyUploadedAsset(row, kind, result, displayName);
         render();
         await persistState("アップロードを全員の画面に反映しました");
       } catch (error) {
