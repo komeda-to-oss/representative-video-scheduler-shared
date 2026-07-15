@@ -160,6 +160,7 @@
     }
 
     .video-card {
+      position: relative;
       display: grid;
       grid-template-columns: minmax(130px, 42%) minmax(0, 1fr);
       min-height: 320px;
@@ -168,6 +169,11 @@
       border-radius: 8px;
       background: var(--paper);
       box-shadow: var(--shadow);
+    }
+
+    .video-card.is-posted {
+      border-color: #64b58c;
+      box-shadow: 0 10px 28px rgba(20, 104, 70, .16);
     }
 
     .visual {
@@ -215,6 +221,19 @@
       box-shadow: 0 5px 20px rgba(0, 0, 0, .28);
       transform: translate(-50%, -50%);
       font-size: 21px;
+    }
+
+    .visual-badge {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      border-radius: 999px;
+      padding: 6px 9px;
+      color: #073f29;
+      background: rgba(224, 248, 236, .96);
+      font-size: 12px;
+      font-weight: 900;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
     }
 
     .card-content {
@@ -318,6 +337,97 @@
     .file-label input { display: none; }
     .file-label:hover { border-color: var(--teal); color: var(--teal-dark); }
 
+    .posted-toggle {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 10px;
+      border: 1px solid #aacfc3;
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: #0f5148;
+      background: #edf8f6;
+      font-size: 13px;
+      font-weight: 900;
+      box-shadow: 0 4px 14px rgba(35, 128, 112, .12);
+    }
+
+    .posted-toggle.is-posted {
+      color: #fff;
+      border-color: #0d6843;
+      background: #168052;
+    }
+
+    .posted-toggle.compact {
+      min-height: 38px;
+      margin-top: 0;
+      padding: 7px 9px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .posted-toggle.card-primary {
+      order: -1;
+      margin: 8px 0 10px;
+      border-width: 2px;
+      font-size: 14px;
+    }
+
+    .posted-toggle.visual-floating {
+      position: absolute;
+      z-index: 5;
+      top: 10px;
+      right: 10px;
+      width: auto;
+      min-height: 36px;
+      margin: 0;
+      padding: 6px 10px;
+      border-color: rgba(255, 255, 255, .72);
+      color: #073f29;
+      background: rgba(235, 249, 244, .96);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .24);
+      font-size: 12px;
+    }
+
+    .posted-toggle.visual-floating.is-posted {
+      color: #fff;
+      border-color: rgba(255, 255, 255, .45);
+      background: #168052;
+    }
+
+    .upload-status {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 5px;
+      margin-top: 4px;
+      padding: 8px;
+      border: 1px solid #d5e7e4;
+      border-radius: 6px;
+      color: #0f5148;
+      background: #f1fbf9;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .upload-status progress {
+      width: 100%;
+      height: 8px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 999px;
+      background: #d7e9e6;
+      appearance: none;
+    }
+
+    .upload-status progress::-webkit-progress-bar {
+      background: #d7e9e6;
+      border-radius: 999px;
+    }
+
+    .upload-status progress::-webkit-progress-value {
+      background: var(--teal);
+      border-radius: 999px;
+    }
+
     .download-button {
       min-height: 38px;
       border: 1px solid #b8d9d5;
@@ -341,7 +451,7 @@
 
     .schedule-row {
       display: grid;
-      grid-template-columns: 54px minmax(160px, 1fr) minmax(190px, 1.5fr) 120px;
+      grid-template-columns: 54px minmax(150px, 1fr) minmax(180px, 1.45fr) 102px 124px;
       align-items: center;
       gap: 12px;
       min-height: 58px;
@@ -543,9 +653,32 @@
       .date-control .step { grid-row: 2; }
       .section-head { align-items: stretch; flex-direction: column; }
       .section-actions { justify-content: flex-start; }
-      .schedule-row { grid-template-columns: 42px minmax(145px, 1fr) 92px; }
+      .schedule-row { grid-template-columns: 42px minmax(145px, 1fr) 92px; gap: 8px; }
       .schedule-row .schedule-title { grid-column: 2 / -1; grid-row: 2; }
+      .schedule-row .posted-toggle { grid-column: 1 / -1; grid-row: 3; }
       .field-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 520px) {
+      .topbar { align-items: flex-start; flex-direction: column; gap: 8px; }
+      .top-actions { width: 100%; justify-content: space-between; }
+      .month-toolbar { grid-template-columns: 1fr; }
+      .month-nav { justify-content: stretch; }
+      .month-nav input { flex: 1; min-width: 0; }
+      .video-card { grid-template-columns: 1fr; min-height: 0; }
+      .visual, .visual img, .visual video, .visual-placeholder {
+        min-height: 0;
+        aspect-ratio: 9 / 16;
+      }
+      .file-actions { grid-template-columns: 1fr 1fr; }
+      .file-label, .download-button, .posted-toggle { min-height: 44px; }
+      .section-actions .button { flex: 1 1 calc(50% - 8px); }
+      .schedule-row { grid-template-columns: 1fr 1fr; }
+      .schedule-row strong { grid-column: 1; }
+      .schedule-row input[type="date"] { grid-column: 2; }
+      .schedule-row .schedule-title { grid-column: 1 / -1; grid-row: auto; }
+      .schedule-row .status,
+      .schedule-row .posted-toggle { grid-column: auto; grid-row: auto; }
     }
   </style>
 </head>
@@ -676,7 +809,7 @@
       <button class="icon-button" id="closeMedia" type="button" aria-label="閉じる">x</button>
     </div>
     <div class="media-body">
-      <video id="mediaVideo" controls playsinline preload="auto" hidden></video>
+      <video id="mediaVideo" controls playsinline preload="metadata" hidden></video>
       <img id="mediaImage" alt="" hidden>
       <div class="media-status" id="mediaStatus" hidden></div>
     </div>
@@ -704,7 +837,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-14-video-compress-1";
+    const APP_BUILD = "2026-07-15-fast-upload-posted-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -716,9 +849,9 @@
       stateBase: "representative-video-scheduler/state/state-",
       mediaBase: "representative-video-scheduler/media/"
     };
+    const LOCAL_TEST_UNLOCK = location.protocol === "file:" && new URLSearchParams(location.search).get("localTest") === "1";
     const MAX_DIRECT_UPLOAD_BYTES = 95 * 1024 * 1024;
-    const VIDEO_COMPRESS_TARGET_BYTES = 72 * 1024 * 1024;
-
+    const CHUNK_UPLOAD_BYTES = 20 * 1024 * 1024;
     const $ = (selector) => document.querySelector(selector);
     const lock = $("#lock");
     const loginForm = $("#loginForm");
@@ -744,8 +877,8 @@
     let knownMissingRevision = null;
     let lastPollAt = 0;
 
-    function unlockApp() {
-      localStorage.setItem("schedulerUnlocked", "1");
+    function unlockApp({ remember = true } = {}) {
+      if (remember) localStorage.setItem("schedulerUnlocked", "1");
       document.body.classList.add("unlocked");
       lock.hidden = true;
     }
@@ -847,6 +980,8 @@
         title: `動画${index + 1}`,
         memo: "",
         ready: false,
+        tiktokPosted: false,
+        tiktokPostedAt: "",
         thumbUrl: "",
         thumbName: "",
         videoUrl: "",
@@ -891,6 +1026,14 @@
         ...row,
         title: row?.title || `動画${index + 1}`
       }));
+      Object.values(next.archives || {}).forEach((snapshot) => {
+        if (!Array.isArray(snapshot?.rows)) return;
+        snapshot.rows = snapshot.rows.map((row, index) => ({
+          ...blankRow(index, row?.postDate || snapshot.startDate || base.active.rows[index]?.postDate),
+          ...row,
+          title: row?.title || `動画${index + 1}`
+        }));
+      });
       return next;
     }
 
@@ -910,13 +1053,33 @@
       }
     }
 
+    function cleanRowForSave(row) {
+      const {
+        localVideoPreviewUrl,
+        videoUploadStatus,
+        videoUploadProgress,
+        videoUploadError,
+        ...clean
+      } = row || {};
+      return clean;
+    }
+
+    function stateForSave(targetRevision) {
+      const payload = structuredClone(state);
+      payload.revision = targetRevision;
+      payload.updatedAt = new Date().toISOString();
+      if (payload.active?.rows) {
+        payload.active.rows = payload.active.rows.map(cleanRowForSave);
+      }
+      Object.values(payload.archives || {}).forEach((snapshot) => {
+        if (snapshot?.rows) snapshot.rows = snapshot.rows.map(cleanRowForSave);
+      });
+      return payload;
+    }
+
     async function uploadJsonState(targetRevision) {
       const form = new FormData();
-      const payload = {
-        ...state,
-        revision: targetRevision,
-        updatedAt: new Date().toISOString()
-      };
+      const payload = stateForSave(targetRevision);
       const scriptText = `window.__schedulerState${targetRevision}=${JSON.stringify(payload)};`;
       const blob = new Blob([scriptText], { type: "text/javascript" });
       form.append("file", blob, `state-${targetRevision}.js`);
@@ -968,8 +1131,12 @@
       saveTimer = window.setTimeout(() => persistState("変更を全員に反映しました"), 700);
     }
 
-    function videoSource(row) {
+    function savedVideoSource(row) {
       return row.videoUrl || "";
+    }
+
+    function videoSource(row) {
+      return row.localVideoPreviewUrl || savedVideoSource(row);
     }
 
     function cloudinaryVideoPlaybackUrl(url) {
@@ -977,20 +1144,22 @@
       if (!value.includes("/video/upload/")) return value;
       const [clean, suffix = ""] = value.split(/(?=[?#])/);
       const transformed = clean
-        .replace("/video/upload/", "/video/upload/f_mp4,vc_auto,q_auto/")
+        .replace("/video/upload/", "/video/upload/f_mp4,vc_auto,q_auto:eco,w_720,c_limit/")
         .replace(/\.(mov|m4v|avi|mkv|webm|3gp)$/i, ".mp4");
       return `${transformed}${suffix}`;
     }
 
     function videoPlaybackSource(row) {
-      return row.videoPlaybackUrl || cloudinaryVideoPlaybackUrl(videoSource(row));
+      if (row.localVideoPreviewUrl) return row.localVideoPreviewUrl;
+      return savedVideoSource(row) || row.videoPlaybackUrl || cloudinaryVideoPlaybackUrl(savedVideoSource(row)) || "";
     }
 
     function videoPlaybackSources(row) {
       return [...new Set([
+        row.localVideoPreviewUrl || "",
+        savedVideoSource(row),
         row.videoPlaybackUrl || "",
-        cloudinaryVideoPlaybackUrl(videoSource(row)),
-        videoSource(row)
+        cloudinaryVideoPlaybackUrl(savedVideoSource(row))
       ].filter(Boolean))];
     }
 
@@ -1014,13 +1183,36 @@
     function renderVisual(row, index) {
       const thumb = thumbSource(row);
       const video = videoPlaybackSource(row);
+      const badge = row.tiktokPosted ? `<span class="visual-badge">TikTok投稿済み</span>` : "";
       if (thumb) {
-        return `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">${video ? `<span class="play">▶</span>` : ""}`;
+        return `${badge}<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">${video ? `<span class="play">▶</span>` : ""}`;
       }
       if (video) {
-        return `<video src="${escapeHtml(video)}" muted playsinline preload="metadata"></video><span class="play">▶</span>`;
+        return `${badge}<video src="${escapeHtml(video)}" muted playsinline preload="metadata"></video><span class="play">▶</span>`;
       }
-      return `<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`;
+      return `${badge}<span class="visual-placeholder">No.${index + 1}<br>${escapeHtml(row.title)}</span>`;
+    }
+
+    function postedButtonMarkup(row, index, compact = false, cardPrimary = false, visualFloating = false) {
+      const label = visualFloating
+        ? (row.tiktokPosted ? "投稿済み ✓" : "投稿済みにする")
+        : (row.tiktokPosted ? "TikTok投稿済み ✓" : compact ? "TikTok未投稿" : "TikTok投稿済みにする");
+      return `
+        <button class="posted-toggle ${compact ? "compact" : ""} ${cardPrimary ? "card-primary" : ""} ${visualFloating ? "visual-floating" : ""} ${row.tiktokPosted ? "is-posted" : ""}" type="button" data-action="toggle-posted" data-index="${index}" aria-pressed="${row.tiktokPosted ? "true" : "false"}">
+          ${label}
+        </button>
+      `;
+    }
+
+    function uploadStatusMarkup(row) {
+      if (!row.videoUploadStatus) return "";
+      const progress = Math.max(0, Math.min(100, Number(row.videoUploadProgress || 0)));
+      return `
+        <div class="upload-status">
+          <span>${escapeHtml(row.videoUploadStatus)}</span>
+          <progress value="${progress}" max="100"></progress>
+        </div>
+      `;
     }
 
     function render() {
@@ -1033,12 +1225,14 @@
 
       videoGrid.innerHTML = rows.map((row, index) => {
         const video = videoSource(row);
+        const savedVideo = savedVideoSource(row);
         const thumb = thumbSource(row);
         return `
-          <article class="video-card" data-index="${index}">
+          <article class="video-card ${row.tiktokPosted ? "is-posted" : ""}" data-index="${index}">
             <button class="visual" type="button" data-action="preview" data-index="${index}" aria-label="No.${index + 1}を確認">
               ${renderVisual(row, index)}
             </button>
+            ${postedButtonMarkup(row, index, true, false, true)}
             <div class="card-content">
               <div class="number-line">
                 <span>No.${index + 1}</span>
@@ -1046,6 +1240,7 @@
                   ${row.ready ? "準備OK" : "未完了"}
                 </button>
               </div>
+              ${postedButtonMarkup(row, index, false, true)}
               <input class="title-input" data-field="title" data-index="${index}" value="${escapeHtml(row.title)}" aria-label="No.${index + 1}のタイトル">
               <div class="date-control">
                 <button class="step" type="button" data-action="date-step" data-amount="-1" data-index="${index}" aria-label="1日前">-</button>
@@ -1053,10 +1248,11 @@
                 <button class="step" type="button" data-action="date-step" data-amount="1" data-index="${index}" aria-label="1日後">+</button>
               </div>
               <div class="file-actions">
-                <button class="file-label" type="button" data-action="widget-upload" data-kind="video" data-index="${index}">動画を変更</button>
+                <button class="file-label" type="button" data-action="widget-upload" data-kind="video" data-index="${index}">動画を入れる</button>
                 <button class="file-label" type="button" data-action="widget-upload" data-kind="thumb" data-index="${index}">サムネ変更</button>
-                <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${video ? "" : "disabled"}>動画保存</button>
+                <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${savedVideo ? "" : "disabled"}>動画保存</button>
                 <button class="download-button" type="button" data-action="download-thumb" data-index="${index}" ${thumb ? "" : "disabled"}>サムネ保存</button>
+                ${uploadStatusMarkup(row)}
               </div>
             </div>
           </article>
@@ -1071,6 +1267,7 @@
           <button class="status ${row.ready ? "ready" : ""}" type="button" data-action="ready" data-index="${index}">
             ${row.ready ? "準備OK" : "未完了"}
           </button>
+          ${postedButtonMarkup(row, index, true)}
         </div>
       `).join("");
 
@@ -1081,15 +1278,16 @@
       return `
         <div class="video-grid">
           ${(snapshot.rows || []).map((row, index) => `
-            <article class="video-card">
+            <article class="video-card ${row.tiktokPosted ? "is-posted" : ""}">
               <button class="visual" type="button" data-history-preview="${escapeHtml(snapshot.month)}" data-index="${index}">
                 ${renderVisual(row, index)}
               </button>
               <div class="card-content">
                 <div class="number-line"><span>No.${index + 1}</span><span>${formatDate(row.postDate)}</span></div>
                 <p><strong>${escapeHtml(row.title)}</strong></p>
+                ${row.tiktokPosted ? `<p class="status ready">TikTok投稿済み</p>` : ""}
                 <div class="file-actions">
-                  <button class="download-button" type="button" data-action="download-history-video" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${videoSource(row) ? "" : "disabled"}>動画保存</button>
+                  <button class="download-button" type="button" data-action="download-history-video" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${savedVideoSource(row) ? "" : "disabled"}>動画保存</button>
                   <button class="download-button" type="button" data-action="download-history-thumb" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${thumbSource(row) ? "" : "disabled"}>サムネ保存</button>
                 </div>
               </div>
@@ -1147,10 +1345,6 @@
         setMediaStatus("動画を読み込んでいます。再生ボタンでアプリ内再生できます");
         mediaDialog.showModal();
         mediaVideo.load();
-        const playAttempt = mediaVideo.play();
-        if (playAttempt?.catch) {
-          playAttempt.catch(() => setMediaStatus("再生ボタンを押すとアプリ内で再生できます"));
-        }
         return;
       } else if (thumb) {
         mediaImage.src = thumb;
@@ -1198,7 +1392,11 @@
     function downloadRowAsset(row, kind, index) {
       const title = safeFileTitle(row, index);
       if (kind === "video") {
-        const url = videoSource(row);
+        const url = savedVideoSource(row);
+        if (!url) {
+          showToast("共有保存が終わってから動画保存できます", 5000);
+          return;
+        }
         downloadAsset(url, `${title}_動画${extensionFromUrl(url, ".mp4")}`);
       } else {
         const url = thumbSource(row);
@@ -1252,6 +1450,31 @@
       }
     }
 
+    function clearLocalVideoPreview(row) {
+      if (row?.localVideoPreviewUrl) {
+        URL.revokeObjectURL(row.localVideoPreviewUrl);
+        row.localVideoPreviewUrl = "";
+      }
+    }
+
+    function setLocalVideoPreview(row, file) {
+      clearLocalVideoPreview(row);
+      row.localVideoPreviewUrl = URL.createObjectURL(file);
+      row.videoFileName = file.name;
+    }
+
+    function setVideoUploadStatus(row, message, progress = 0) {
+      row.videoUploadStatus = message;
+      row.videoUploadProgress = progress;
+      render();
+    }
+
+    function clearVideoUploadStatus(row) {
+      row.videoUploadStatus = "";
+      row.videoUploadProgress = 0;
+      row.videoUploadError = "";
+    }
+
     function fallbackFilePick(kind, index) {
       const input = document.createElement("input");
       input.type = "file";
@@ -1267,7 +1490,7 @@
       const row = state.active.rows[index];
       if (!row) return;
       if (kind === "video") {
-        showToast("動画を選んでください。100MB超えは自動で圧縮します", 5000);
+        showToast("動画を選んでください。大きい動画は分割して共有保存します", 5000);
         fallbackFilePick(kind, index);
         return;
       }
@@ -1324,148 +1547,129 @@
       widget.open();
     }
 
-    async function uploadDirect(file, kind, safeName) {
+    function uploadDirect(file, kind, safeName, onProgress = () => {}) {
       const form = new FormData();
       form.append("file", file, safeName);
       form.append("upload_preset", CLOUDINARY.uploadPreset);
-      const response = await fetch(uploadUrl("auto"), { method: "POST", body: form });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error?.message || "アップロードできませんでした");
-      return result;
-    }
-
-    function supportedRecorderType() {
-      const types = [
-        "video/webm;codecs=vp9,opus",
-        "video/webm;codecs=vp8,opus",
-        "video/webm"
-      ];
-      return types.find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || "";
-    }
-
-    function safeVideoName(name) {
-      return `${String(name || "video").replace(/\.[^.]+$/, "").replace(/[^\w.\-]+/g, "_").slice(-70)}.webm`;
-    }
-
-    function canvasSizeForVideo(video) {
-      const width = video.videoWidth || 720;
-      const height = video.videoHeight || 1280;
-      const maxSide = 720;
-      const ratio = Math.min(1, maxSide / Math.max(width, height));
-      const even = (value) => Math.max(2, Math.round(value / 2) * 2);
-      return { width: even(width * ratio), height: even(height * ratio) };
-    }
-
-    async function compressVideoFile(file) {
-      if (!window.MediaRecorder) throw new Error("このブラウザでは100MB超え動画の圧縮ができません");
-      const mimeType = supportedRecorderType();
-      if (!mimeType) throw new Error("このブラウザでは動画圧縮形式に対応していません");
-
-      const objectUrl = URL.createObjectURL(file);
-      const video = document.createElement("video");
-      video.src = objectUrl;
-      video.preload = "auto";
-      video.playsInline = true;
-      video.muted = true;
-      video.style.position = "fixed";
-      video.style.left = "-9999px";
-      video.style.top = "0";
-      document.body.appendChild(video);
-
-      try {
-        await new Promise((resolve, reject) => {
-          video.onloadedmetadata = resolve;
-          video.onerror = () => reject(new Error("動画を読み込めませんでした"));
-        });
-        const duration = Math.max(1, Number(video.duration) || 1);
-        const size = canvasSizeForVideo(video);
-        const canvas = document.createElement("canvas");
-        canvas.width = size.width;
-        canvas.height = size.height;
-        const ctx = canvas.getContext("2d", { alpha: false });
-        if (!ctx || !canvas.captureStream) throw new Error("動画圧縮の準備に失敗しました");
-
-        const sourceStream = video.captureStream?.();
-        const canvasStream = canvas.captureStream(24);
-        const tracks = [...canvasStream.getVideoTracks(), ...(sourceStream?.getAudioTracks?.() || [])];
-        const mixedStream = new MediaStream(tracks);
-        const audioBitsPerSecond = 96 * 1000;
-        const totalBitsPerSecond = Math.floor((VIDEO_COMPRESS_TARGET_BYTES * 8) / duration);
-        const videoBitsPerSecond = Math.max(350 * 1000, Math.min(1600 * 1000, totalBitsPerSecond - audioBitsPerSecond));
-        const recorder = new MediaRecorder(mixedStream, {
-          mimeType,
-          videoBitsPerSecond,
-          audioBitsPerSecond
-        });
-        const chunks = [];
-        recorder.ondataavailable = (event) => {
-          if (event.data?.size) chunks.push(event.data);
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", uploadUrl(kind === "video" ? "video" : "auto"));
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
         };
-
-        let lastToast = 0;
-        let drawing = true;
-        const drawFrame = () => {
-          if (!drawing) return;
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const percent = Math.min(99, Math.max(1, Math.round((video.currentTime / duration) * 100)));
-          setConnection("saving", `圧縮中 ${percent}%`);
-          if (Date.now() - lastToast > 5000) {
-            showToast(`100MB超えのため圧縮中 ${percent}%`, 6000);
-            lastToast = Date.now();
+        request.onload = () => {
+          let result = {};
+          try {
+            result = JSON.parse(request.responseText || "{}");
+          } catch {
+            result = {};
           }
-          requestAnimationFrame(drawFrame);
+          if (request.status >= 200 && request.status < 300) {
+            onProgress(100);
+            resolve(result);
+          } else {
+            reject(new Error(result.error?.message || "アップロードできませんでした"));
+          }
         };
+        request.onerror = () => reject(new Error("アップロード中に通信が切れました"));
+        request.send(form);
+      });
+    }
 
-        const finished = new Promise((resolve, reject) => {
-          recorder.onerror = () => reject(new Error("動画圧縮に失敗しました"));
-          recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
-          video.onended = () => {
-            drawing = false;
-            if (recorder.state !== "inactive") recorder.stop();
-          };
-        });
-
-        showToast("100MB超えのため動画を圧縮します。画面を閉じずに待ってください", 9000);
-        recorder.start(1000);
-        drawFrame();
-        await video.play();
-        const compressed = await finished;
-        tracks.forEach((track) => track.stop());
-        if (!compressed.size) throw new Error("圧縮後の動画を作れませんでした");
-        if (compressed.size > MAX_DIRECT_UPLOAD_BYTES) {
-          throw new Error(`圧縮後も${Math.round(compressed.size / 1024 / 1024)}MBあります。動画を短くして再度入れてください`);
+    async function uploadChunkPart({ chunk, safeName, resourceType, uploadId, start, end, total }) {
+      let lastError;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const form = new FormData();
+        form.append("file", chunk, safeName);
+        form.append("upload_preset", CLOUDINARY.uploadPreset);
+        try {
+          const response = await fetch(uploadUrl(resourceType), {
+            method: "POST",
+            body: form,
+            headers: {
+              "X-Unique-Upload-Id": uploadId,
+              "Content-Range": `bytes ${start}-${end}/${total}`
+            }
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error?.message || "分割アップロードできませんでした");
+          return result;
+        } catch (error) {
+          lastError = error;
+          await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
         }
-        showToast(`圧縮完了。アップロードします`, 5000);
-        return { blob: compressed, safeName: safeVideoName(file.name), displayName: safeVideoName(file.name) };
-      } finally {
-        video.pause();
-        video.remove();
-        URL.revokeObjectURL(objectUrl);
       }
+      throw lastError || new Error("分割アップロードできませんでした");
+    }
+
+    async function uploadChunkedDirect(file, kind, safeName, onProgress = () => {}) {
+      const resourceType = kind === "video" ? "video" : "auto";
+      const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let finalResult = null;
+      for (let start = 0; start < file.size; start += CHUNK_UPLOAD_BYTES) {
+        const end = Math.min(start + CHUNK_UPLOAD_BYTES - 1, file.size - 1);
+        const chunk = file.slice(start, end + 1);
+        finalResult = await uploadChunkPart({
+          chunk,
+          safeName,
+          resourceType,
+          uploadId,
+          start,
+          end,
+          total: file.size
+        });
+        onProgress(Math.min(99, Math.round(((end + 1) / file.size) * 100)));
+      }
+      if (!finalResult?.secure_url) throw new Error("アップロード後の動画URLを取得できませんでした");
+      onProgress(100);
+      return finalResult;
     }
 
     async function uploadFile(file, kind, index) {
       showToast(`${kind === "video" ? "動画" : "サムネ"}をアップロード中です`);
       setConnection("saving", "保存中");
+      const active = state.active;
+      const row = active.rows[index];
+      if (!row) return;
       try {
-        const active = state.active;
-        const row = active.rows[index];
         const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
-        let uploadBlob = file;
-        let uploadName = safeName;
-        let displayName = file.name;
-        if (kind === "video" && file.size > MAX_DIRECT_UPLOAD_BYTES) {
-          const compressed = await compressVideoFile(file);
-          uploadBlob = compressed.blob;
-          uploadName = compressed.safeName;
-          displayName = compressed.displayName;
+        const uploadName = safeName;
+        const displayName = file.name;
+        if (kind === "video") {
+          setLocalVideoPreview(row, file);
+          setVideoUploadStatus(row, "選択した動画を表示しました。共有用に準備中です", 2);
+          showToast("動画を先に表示しました。共有反映までこのまま待ってください", 5000);
         }
-        const result = await uploadDirect(uploadBlob, kind, uploadName);
+        let result;
+        if (kind === "video" && file.size > MAX_DIRECT_UPLOAD_BYTES) {
+          setVideoUploadStatus(row, "大きい動画を分割アップロード中 0%（動画は短くしません）", 0);
+          result = await uploadChunkedDirect(file, kind, uploadName, (percent) => {
+            setVideoUploadStatus(row, `大きい動画を分割アップロード中 ${percent}%（動画は短くしません）`, percent);
+          });
+        } else {
+          if (kind === "video") setVideoUploadStatus(row, "共有アップロード中 0%", 0);
+          result = await uploadDirect(file, kind, uploadName, (percent) => {
+            if (kind === "video") setVideoUploadStatus(row, `共有アップロード中 ${percent}%`, percent);
+          });
+        }
         applyUploadedAsset(row, kind, result, displayName);
+        if (kind === "video") {
+          clearLocalVideoPreview(row);
+          setVideoUploadStatus(row, "全員の画面へ保存中です", 100);
+        }
         render();
         await persistState("アップロードを全員の画面に反映しました");
+        if (kind === "video") {
+          clearVideoUploadStatus(row);
+          render();
+        }
       } catch (error) {
         setConnection("offline", "保存失敗");
+        if (kind === "video") {
+          row.videoUploadError = error.message || "もう一度試してください";
+          setVideoUploadStatus(row, "アップロード失敗。まだ他の人には共有されていません", 0);
+        }
         showToast(`アップロード失敗: ${error.message || "もう一度試してください"}`, 9000);
       }
     }
@@ -1539,6 +1743,13 @@
         state.active.rows[index].ready = !state.active.rows[index].ready;
         render();
         scheduleSave();
+      }
+      if (action === "toggle-posted") {
+        const row = state.active.rows[index];
+        row.tiktokPosted = !row.tiktokPosted;
+        row.tiktokPostedAt = row.tiktokPosted ? new Date().toISOString() : "";
+        render();
+        await persistState(row.tiktokPosted ? "TikTok投稿済みにしました" : "TikTok未投稿に戻しました");
       }
       if (action === "date-step") {
         state.active.rows[index].postDate = addDays(state.active.rows[index].postDate, Number(target.dataset.amount));
@@ -1682,7 +1893,11 @@
     }
 
     (async function boot() {
-      if (localStorage.getItem("schedulerUnlocked") === "1") {
+      if (LOCAL_TEST_UNLOCK) {
+        unlockApp({ remember: false });
+        state = initialState();
+        render();
+      } else if (localStorage.getItem("schedulerUnlocked") === "1") {
         unlockApp();
         await loadLatest({ quiet: true });
       } else {
