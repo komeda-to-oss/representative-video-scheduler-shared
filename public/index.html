@@ -837,7 +837,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-15-fast-upload-posted-1";
+    const APP_BUILD = "2026-07-15-direct-save-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -1363,26 +1363,24 @@
       return match ? `.${match[1]}` : fallback;
     }
 
-    async function downloadAsset(url, filename) {
+    function cloudinaryAttachmentUrl(url) {
+      const value = String(url || "");
+      if (!value.includes("res.cloudinary.com")) return value;
+      const [clean, suffix = ""] = value.split(/(?=[?#])/);
+      return `${clean.replace(/\/(image|video|raw)\/upload\//, "/$1/upload/fl_attachment/")}${suffix}`;
+    }
+
+    function downloadAsset(url, filename) {
       if (!url) return;
-      showToast("保存ファイルを準備しています");
-      try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error();
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = objectUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-        showToast("保存を開始しました");
-      } catch {
-        window.open(url, "_blank", "noopener");
-        showToast("別タブで開きました");
-      }
+      const link = document.createElement("a");
+      link.href = cloudinaryAttachmentUrl(url);
+      link.download = filename;
+      link.target = "_blank";
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      showToast("保存を開始しました");
     }
 
     function safeFileTitle(row, index) {
