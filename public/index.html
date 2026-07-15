@@ -837,7 +837,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-15-fast-upload-progress-1";
+    const APP_BUILD = "2026-07-15-widget-video-upload-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -927,6 +927,44 @@
       connection.classList.toggle("offline", mode === "offline");
       connection.classList.toggle("saving", mode === "saving");
       connection.textContent = label || (mode === "offline" ? "未接続" : mode === "saving" ? "保存中" : "同期中");
+    }
+
+    function formatFileSize(bytes) {
+      const size = Number(bytes || 0);
+      if (!Number.isFinite(size) || size <= 0) return "0MB";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = size;
+      let unitIndex = 0;
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+      }
+      return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)}${units[unitIndex]}`;
+    }
+
+    function cloudinaryErrorMessage(error, fallback = "Cloudinaryで失敗しました") {
+      if (!error) return fallback;
+      if (typeof error === "string") return error.slice(0, 240) || fallback;
+      const candidates = [
+        error.message,
+        error.statusText,
+        error.error?.message,
+        error.info?.error?.message,
+        error.result?.error?.message
+      ].filter(Boolean);
+      if (candidates.length) return String(candidates[0]).slice(0, 240);
+      try {
+        const text = JSON.stringify(error);
+        return text ? text.slice(0, 240) : fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    function cloudinaryRequestError(request, result, fallback) {
+      const headerError = request.getResponseHeader("X-Cld-Error");
+      const detail = result?.error?.message || headerError || fallback;
+      return `${fallback} (${request.status || "通信エラー"}): ${cloudinaryErrorMessage(detail, fallback)}`;
     }
 
     function stateUrl(revision) {
@@ -1488,14 +1526,17 @@
       const row = state.active.rows[index];
       if (!row) return;
       if (kind === "video") {
-        showToast("動画を選んでください。大きい動画は分割して共有保存します", 5000);
-        fallbackFilePick(kind, index);
-        return;
+        row.videoUploadError = "";
+        setVideoUploadStatus(row, "Cloudinary公式アップロード画面を開いています（100MB超も対応）", 1);
       }
-      showToast(`${uploadKindName(kind)}アップロード画面を開きます`, 3000);
+      showToast(`${uploadKindName(kind)}アップロード画面を開きます`, kind === "video" ? 5000 : 3000);
       try {
         await loadUploadWidget();
       } catch (error) {
+        if (kind === "video") {
+          row.videoUploadError = cloudinaryErrorMessage(error, "公式アップロード画面を開けませんでした");
+          setVideoUploadStatus(row, "公式画面を開けないため通常選択に切り替えます", 0);
+        }
         showToast("通常アップロードに切り替えます", 3000);
         fallbackFilePick(kind, index);
         return;
@@ -1510,17 +1551,31 @@
         maxFiles: 1,
         resourceType: kind === "video" ? "video" : "image",
         clientAllowedFormats: kind === "video" ? ["mp4", "mov", "m4v", "webm"] : ["jpg", "jpeg", "png", "webp"],
+        maxChunkSize: CHUNK_UPLOAD_BYTES,
         showAdvancedOptions: false,
         cropping: false
       }, async (error, result) => {
         if (error) {
+          const message = cloudinaryErrorMessage(error);
           setConnection("offline", "保存失敗");
-          showToast(`アップロード失敗: ${error.message || error.statusText || "Cloudinaryで失敗しました"}`, 9000);
+          if (kind === "video") {
+            const latestRow = state.active.rows[index];
+            latestRow.videoUploadError = message;
+            setVideoUploadStatus(latestRow, "アップロード失敗。まだ他の人には共有されていません", 0);
+          }
+          showToast(`アップロード失敗: ${message}`, 9000);
           return;
         }
         if (!result) return;
+        if (kind === "video" && result.event === "upload-added") {
+          const size = result.info?.file?.size || result.info?.size || 0;
+          setVideoUploadStatus(row, size
+            ? `動画サイズ ${formatFileSize(size)}。公式画面でアップロード中です（短くしません）`
+            : "公式画面でアップロード中です（動画は短くしません）", 5);
+        }
         if (result.event === "queues-start") {
           setConnection("saving", "アップロード中");
+          if (kind === "video") setVideoUploadStatus(row, "Cloudinary公式アップロード中です（動画は短くしません）", 10);
           showToast(`${uploadKindName(kind)}をアップロード中です`, 2600);
         }
         if (result.event !== "success" || completed) return;
@@ -1528,18 +1583,33 @@
         const info = result.info || {};
         if (!info.secure_url) {
           setConnection("offline", "保存失敗");
+          if (kind === "video") {
+            row.videoUploadError = "アップロード後のURLを取得できませんでした";
+            setVideoUploadStatus(row, "アップロード失敗。URLを取得できませんでした", 0);
+          }
           showToast("アップロード失敗: URLを取得できませんでした", 9000);
           return;
         }
         try {
           const latestRow = state.active.rows[index];
           applyUploadedAsset(latestRow, kind, info, info.original_filename || info.display_name);
+          if (kind === "video") setVideoUploadStatus(latestRow, "全員の画面へ保存中です", 100);
           render();
           await persistState("アップロードを全員の画面に反映しました");
+          if (kind === "video") {
+            clearVideoUploadStatus(latestRow);
+            render();
+          }
           widget.close({ quiet: true });
         } catch (saveError) {
+          const message = cloudinaryErrorMessage(saveError, "もう一度試してください");
           setConnection("offline", "保存失敗");
-          showToast(`アップロード後の保存失敗: ${saveError.message || "もう一度試してください"}`, 9000);
+          if (kind === "video") {
+            const latestRow = state.active.rows[index];
+            latestRow.videoUploadError = message;
+            setVideoUploadStatus(latestRow, "アップロード後の共有保存に失敗しました", 0);
+          }
+          showToast(`アップロード後の保存失敗: ${message}`, 9000);
         }
       });
       widget.open();
@@ -1552,6 +1622,7 @@
       return new Promise((resolve, reject) => {
         const request = new XMLHttpRequest();
         request.open("POST", uploadUrl(kind === "video" ? "video" : "auto"));
+        request.timeout = 10 * 60 * 1000;
         request.upload.onprogress = (event) => {
           if (!event.lengthComputable) return;
           onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
@@ -1567,10 +1638,11 @@
             onProgress(100);
             resolve(result);
           } else {
-            reject(new Error(result.error?.message || "アップロードできませんでした"));
+            reject(new Error(cloudinaryRequestError(request, result, "アップロードできませんでした")));
           }
         };
         request.onerror = () => reject(new Error("アップロード中に通信が切れました"));
+        request.ontimeout = () => reject(new Error("アップロードがタイムアウトしました"));
         request.send(form);
       });
     }
@@ -1603,7 +1675,7 @@
           if (request.status >= 200 && request.status < 300) {
             resolve(result);
           } else {
-            reject(new Error(result.error?.message || `分割アップロード失敗 (${request.status})`));
+            reject(new Error(cloudinaryRequestError(request, result, "分割アップロード失敗")));
           }
         };
         request.onerror = () => reject(new Error("通信が切れました"));
@@ -1665,9 +1737,10 @@
         const uploadName = safeName;
         const displayName = file.name;
         if (kind === "video") {
+          const sizeLabel = formatFileSize(file.size);
           setLocalVideoPreview(row, file);
-          setVideoUploadStatus(row, "選択した動画を表示しました。共有用に準備中です", 2);
-          showToast("動画を先に表示しました。共有反映までこのまま待ってください", 5000);
+          setVideoUploadStatus(row, `選択した動画を表示しました（${sizeLabel}）。共有用に準備中です`, 2);
+          showToast(`動画を先に表示しました（${sizeLabel}）。共有反映までこのまま待ってください`, 5000);
         }
         let result;
         if (kind === "video" && file.size > MAX_DIRECT_UPLOAD_BYTES) {
