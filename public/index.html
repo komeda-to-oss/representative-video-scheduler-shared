@@ -837,7 +837,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-15-direct-save-1";
+    const APP_BUILD = "2026-07-15-fast-upload-progress-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -851,7 +851,7 @@
     };
     const LOCAL_TEST_UNLOCK = location.protocol === "file:" && new URLSearchParams(location.search).get("localTest") === "1";
     const MAX_DIRECT_UPLOAD_BYTES = 95 * 1024 * 1024;
-    const CHUNK_UPLOAD_BYTES = 20 * 1024 * 1024;
+    const CHUNK_UPLOAD_BYTES = 6 * 1024 * 1024;
     const $ = (selector) => document.querySelector(selector);
     const lock = $("#lock");
     const loginForm = $("#loginForm");
@@ -1575,39 +1575,68 @@
       });
     }
 
-    async function uploadChunkPart({ chunk, safeName, resourceType, uploadId, start, end, total }) {
+    function parseUploadResponse(text) {
+      try {
+        return JSON.parse(text || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function uploadChunkPart({ chunk, safeName, resourceType, uploadId, start, end, total, onProgress = () => {} }) {
       let lastError;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      const runAttempt = (attempt) => new Promise((resolve, reject) => {
         const form = new FormData();
         form.append("file", chunk, safeName);
         form.append("upload_preset", CLOUDINARY.uploadPreset);
-        try {
-          const response = await fetch(uploadUrl(resourceType), {
-            method: "POST",
-            body: form,
-            headers: {
-              "X-Unique-Upload-Id": uploadId,
-              "Content-Range": `bytes ${start}-${end}/${total}`
-            }
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error?.message || "分割アップロードできませんでした");
-          return result;
-        } catch (error) {
-          lastError = error;
-          await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+        const request = new XMLHttpRequest();
+        request.open("POST", uploadUrl(resourceType));
+        request.timeout = 10 * 60 * 1000;
+        request.setRequestHeader("X-Unique-Upload-Id", uploadId);
+        request.setRequestHeader("Content-Range", `bytes ${start}-${end}/${total}`);
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          onProgress(Math.min(99, Math.round(((start + event.loaded) / total) * 100)));
+        };
+        request.onload = () => {
+          const result = parseUploadResponse(request.responseText);
+          if (request.status >= 200 && request.status < 300) {
+            resolve(result);
+          } else {
+            reject(new Error(result.error?.message || `分割アップロード失敗 (${request.status})`));
+          }
+        };
+        request.onerror = () => reject(new Error("通信が切れました"));
+        request.ontimeout = () => reject(new Error("アップロードがタイムアウトしました"));
+        request.send(form);
+      });
+
+      return (async () => {
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          try {
+            return await runAttempt(attempt);
+          } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 900 * (attempt + 1)));
+          }
         }
-      }
-      throw lastError || new Error("分割アップロードできませんでした");
+        throw lastError || new Error("分割アップロードできませんでした");
+      })();
     }
 
-    async function uploadChunkedDirect(file, kind, safeName, onProgress = () => {}) {
+    async function uploadChunkedDirect(file, kind, safeName, onProgress = () => {}, onChunk = () => {}) {
+      if (file.size > 1024 * 1024 * 1024) {
+        throw new Error("1GBを超える動画はCloudinaryの制限で失敗する場合があります");
+      }
       const resourceType = kind === "video" ? "video" : "auto";
       const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       let finalResult = null;
+      const totalChunks = Math.ceil(file.size / CHUNK_UPLOAD_BYTES);
       for (let start = 0; start < file.size; start += CHUNK_UPLOAD_BYTES) {
         const end = Math.min(start + CHUNK_UPLOAD_BYTES - 1, file.size - 1);
         const chunk = file.slice(start, end + 1);
+        const chunkNumber = Math.floor(start / CHUNK_UPLOAD_BYTES) + 1;
+        onChunk(chunkNumber, totalChunks);
         finalResult = await uploadChunkPart({
           chunk,
           safeName,
@@ -1615,7 +1644,8 @@
           uploadId,
           start,
           end,
-          total: file.size
+          total: file.size,
+          onProgress
         });
         onProgress(Math.min(99, Math.round(((end + 1) / file.size) * 100)));
       }
@@ -1641,9 +1671,13 @@
         }
         let result;
         if (kind === "video" && file.size > MAX_DIRECT_UPLOAD_BYTES) {
-          setVideoUploadStatus(row, "大きい動画を分割アップロード中 0%（動画は短くしません）", 0);
+          let chunkLabel = "";
+          setVideoUploadStatus(row, "大きい動画を高速分割アップロード中 0%（動画は短くしません）", 0);
           result = await uploadChunkedDirect(file, kind, uploadName, (percent) => {
-            setVideoUploadStatus(row, `大きい動画を分割アップロード中 ${percent}%（動画は短くしません）`, percent);
+            setVideoUploadStatus(row, `大きい動画を高速分割アップロード中 ${percent}% ${chunkLabel}（動画は短くしません）`, percent);
+          }, (chunkNumber, totalChunks) => {
+            chunkLabel = `(${chunkNumber}/${totalChunks})`;
+            setVideoUploadStatus(row, `大きい動画を高速分割アップロード中 ${row.videoUploadProgress || 0}% ${chunkLabel}（動画は短くしません）`, row.videoUploadProgress || 0);
           });
         } else {
           if (kind === "video") setVideoUploadStatus(row, "共有アップロード中 0%", 0);
