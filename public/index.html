@@ -837,7 +837,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
-    const APP_BUILD = "2026-07-15-widget-video-upload-1";
+    const APP_BUILD = "2026-07-16-fast-upload-20mb-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -851,7 +851,7 @@
     };
     const LOCAL_TEST_UNLOCK = location.protocol === "file:" && new URLSearchParams(location.search).get("localTest") === "1";
     const MAX_DIRECT_UPLOAD_BYTES = 95 * 1024 * 1024;
-    const CHUNK_UPLOAD_BYTES = 6 * 1024 * 1024;
+    const CHUNK_UPLOAD_BYTES = 20 * 1024 * 1024;
     const $ = (selector) => document.querySelector(selector);
     const lock = $("#lock");
     const loginForm = $("#loginForm");
