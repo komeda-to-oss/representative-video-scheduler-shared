@@ -566,12 +566,19 @@
     .media-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .media-head .icon-button { flex: 0 0 auto; }
     .media-body { position: relative; background: #101719; }
-    .media-dialog video, .media-dialog img {
+    .media-dialog video, .media-dialog img, .media-dialog mux-player {
       display: block;
       width: 100%;
       max-height: calc(100vh - 145px);
       object-fit: contain;
       background: #101719;
+    }
+
+    .media-dialog mux-player {
+      aspect-ratio: 9 / 16;
+      max-width: min(100%, 520px);
+      margin: 0 auto;
+      --media-object-fit: contain;
     }
 
     .media-status {
@@ -726,6 +733,7 @@
         </div>
         <div class="section-actions">
           <button class="button secondary" id="addSlot" type="button">枠を追加</button>
+          <button class="button secondary" id="downloadCurrentZip" type="button">今月ZIP保存</button>
           <button class="button danger" id="clearCurrent" type="button">今月を全削除</button>
           <button class="button primary" id="archiveCurrent" type="button">履歴に保存</button>
           <button class="button secondary" id="newMonth" type="button">新しい月</button>
@@ -809,6 +817,7 @@
       <button class="icon-button" id="closeMedia" type="button" aria-label="閉じる">x</button>
     </div>
     <div class="media-body">
+      <mux-player id="mediaMuxPlayer" controls stream-type="on-demand" playsinline hidden></mux-player>
       <video id="mediaVideo" controls playsinline preload="metadata" hidden></video>
       <img id="mediaImage" alt="" hidden>
       <div class="media-status" id="mediaStatus" hidden></div>
@@ -836,8 +845,10 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@mux/mux-player"></script>
   <script>
-    const APP_BUILD = "2026-07-16-fast-upload-20mb-1";
+    const APP_BUILD = "2026-07-22-mux-free-local-archive-1";
     if (location.pathname.endsWith("/public/")) {
       location.replace(`${location.origin}${location.pathname}index.html?v=${APP_BUILD}`);
     }
@@ -852,6 +863,11 @@
     const LOCAL_TEST_UNLOCK = location.protocol === "file:" && new URLSearchParams(location.search).get("localTest") === "1";
     const MAX_DIRECT_UPLOAD_BYTES = 95 * 1024 * 1024;
     const CHUNK_UPLOAD_BYTES = 20 * 1024 * 1024;
+    const MUX_CHUNK_BYTES = 20 * 1024 * 1024;
+    const DEFAULT_MUX_FREE_LIMIT = 10;
+    const LOCAL_DB_NAME = "representative-video-scheduler-local-files";
+    const LOCAL_DB_STORE = "files";
+    const API_ENABLED_HOST = location.protocol.startsWith("http") && !location.hostname.includes("github.io");
     const $ = (selector) => document.querySelector(selector);
     const lock = $("#lock");
     const loginForm = $("#loginForm");
@@ -863,6 +879,7 @@
     const settingsDialog = $("#settingsDialog");
     const newMonthDialog = $("#newMonthDialog");
     const mediaDialog = $("#mediaDialog");
+    const mediaMuxPlayer = $("#mediaMuxPlayer");
     const mediaVideo = $("#mediaVideo");
     const mediaImage = $("#mediaImage");
     const mediaTitle = $("#mediaTitle");
@@ -876,6 +893,8 @@
     let isSaving = false;
     let knownMissingRevision = null;
     let lastPollAt = 0;
+    let apiCapabilities = null;
+    let apiCapabilitiesChecked = false;
 
     function unlockApp({ remember = true } = {}) {
       if (remember) localStorage.setItem("schedulerUnlocked", "1");
@@ -929,6 +948,60 @@
       connection.textContent = label || (mode === "offline" ? "未接続" : mode === "saving" ? "保存中" : "同期中");
     }
 
+    async function apiJson(path, options = {}) {
+      const response = await fetch(path, {
+        credentials: "include",
+        ...options,
+        headers: {
+          ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+          ...(options.headers || {})
+        },
+        body: options.body && !(options.body instanceof FormData) && typeof options.body !== "string"
+          ? JSON.stringify(options.body)
+          : options.body
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "APIで失敗しました");
+      return result;
+    }
+
+    async function refreshApiCapabilities({ force = false } = {}) {
+      if (!API_ENABLED_HOST) return null;
+      if (apiCapabilitiesChecked && !force) return apiCapabilities;
+      apiCapabilitiesChecked = true;
+      try {
+        apiCapabilities = await apiJson("/api/capabilities");
+      } catch {
+        apiCapabilities = null;
+      }
+      return apiCapabilities;
+    }
+
+    async function tryServerLogin(passcode) {
+      if (!API_ENABLED_HOST) return false;
+      try {
+        await apiJson("/api/login", {
+          method: "POST",
+          body: { passcode }
+        });
+        await refreshApiCapabilities({ force: true });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function canUseServerState() {
+      const capabilities = await refreshApiCapabilities();
+      return Boolean(capabilities?.state);
+    }
+
+    async function canUseServerUpload(kind) {
+      const capabilities = await refreshApiCapabilities();
+      if (kind === "video") return Boolean(capabilities?.muxConfigured);
+      return false;
+    }
+
     function formatFileSize(bytes) {
       const size = Number(bytes || 0);
       if (!Number.isFinite(size) || size <= 0) return "0MB";
@@ -940,6 +1013,107 @@
         unitIndex += 1;
       }
       return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)}${units[unitIndex]}`;
+    }
+
+    let localDbPromise = null;
+
+    function openLocalDb() {
+      if (!("indexedDB" in window)) return Promise.resolve(null);
+      if (localDbPromise) return localDbPromise;
+      localDbPromise = new Promise((resolve) => {
+        const request = indexedDB.open(LOCAL_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(LOCAL_DB_STORE)) {
+            db.createObjectStore(LOCAL_DB_STORE, { keyPath: "key" });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      });
+      return localDbPromise;
+    }
+
+    async function putLocalFile(key, file, meta = {}) {
+      const db = await openLocalDb();
+      if (!db || !file) return false;
+      return new Promise((resolve) => {
+        const tx = db.transaction(LOCAL_DB_STORE, "readwrite");
+        tx.objectStore(LOCAL_DB_STORE).put({
+          key,
+          blob: file,
+          name: file.name || meta.name || "file",
+          type: file.type || meta.type || "application/octet-stream",
+          size: file.size || 0,
+          savedAt: new Date().toISOString(),
+          ...meta
+        });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    }
+
+    async function getLocalFile(key) {
+      const db = await openLocalDb();
+      if (!db || !key) return null;
+      return new Promise((resolve) => {
+        const tx = db.transaction(LOCAL_DB_STORE, "readonly");
+        const request = tx.objectStore(LOCAL_DB_STORE).get(key);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => resolve(null);
+      });
+    }
+
+    function localFileKey(month, index, kind, name = "") {
+      const safe = String(name || kind).replace(/[^\w.\-]+/g, "_").slice(-80);
+      return `${month || "month"}::${index}::${kind}::${Date.now()}::${safe}`;
+    }
+
+    function muxRowsCount() {
+      const rows = state?.active?.rows || [];
+      return rows.filter((row) => row.muxAssetId && !row.muxDeletedAt).length;
+    }
+
+    function muxFreeLimit() {
+      return Number(apiCapabilities?.muxFreeAssetLimit || DEFAULT_MUX_FREE_LIMIT);
+    }
+
+    function canAddMuxVideo(row) {
+      if (row?.muxAssetId && !row?.muxDeletedAt) return false;
+      return muxRowsCount() < muxFreeLimit();
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("ファイルを読み込めませんでした"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function imageFileToDataUrl(file) {
+      if (!file.type?.startsWith("image/")) return readFileAsDataUrl(file);
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("サムネ画像を読み込めませんでした"));
+          img.src = objectUrl;
+        });
+        const maxWidth = 1280;
+        const ratio = Math.min(1, maxWidth / image.naturalWidth);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/jpeg", 0.86);
+      } catch {
+        return readFileAsDataUrl(file);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
 
     function cloudinaryErrorMessage(error, fallback = "Cloudinaryで失敗しました") {
@@ -1020,10 +1194,22 @@
         ready: false,
         tiktokPosted: false,
         tiktokPostedAt: "",
+        thumbData: "",
         thumbUrl: "",
         thumbName: "",
         videoUrl: "",
-        videoFileName: ""
+        videoFileName: "",
+        videoProvider: "",
+        r2VideoKey: "",
+        r2ThumbKey: "",
+        muxUploadId: "",
+        muxAssetId: "",
+        muxPlaybackId: "",
+        muxStatus: "",
+        localArchiveKey: "",
+        localThumbArchiveKey: "",
+        localArchivedAt: "",
+        muxDeletedAt: ""
       };
     }
 
@@ -1076,6 +1262,19 @@
     }
 
     async function loadLatest({ quiet = false } = {}) {
+      if (await canUseServerState()) {
+        try {
+          setConnection("saving", "読込中");
+          state = normalizeState(await apiJson("/api/state"));
+          setConnection("online", "同期中");
+          render();
+          if (!quiet) showToast("最新データを読み込みました");
+          return;
+        } catch {
+          apiCapabilities = null;
+          apiCapabilitiesChecked = false;
+        }
+      }
       try {
         setConnection("saving", "読込中");
         const latest = await findLatestState();
@@ -1088,6 +1287,29 @@
         setConnection("offline", "読込失敗");
         render();
         if (!quiet) showToast("共有データの読み込みに失敗しました");
+      }
+    }
+
+    async function persistServerState(message) {
+      if (!state || isSaving) return;
+      isSaving = true;
+      hasLocalChanges = true;
+      setConnection("saving", "保存中");
+      try {
+        const payload = stateForSave(Number(state.revision || 0) + 1);
+        state = normalizeState(await apiJson("/api/state", {
+          method: "PUT",
+          body: payload
+        }));
+        hasLocalChanges = false;
+        setConnection("online", "同期中");
+        showToast(message);
+        render();
+      } catch (error) {
+        setConnection("offline", "保存失敗");
+        showToast(error.message || "保存に失敗しました");
+      } finally {
+        isSaving = false;
       }
     }
 
@@ -1135,6 +1357,10 @@
     }
 
     async function persistState(message = "全員の画面に反映しました") {
+      if (await canUseServerState()) {
+        await persistServerState(message);
+        return;
+      }
       if (!state || isSaving) return;
       isSaving = true;
       hasLocalChanges = true;
@@ -1173,8 +1399,21 @@
       return row.videoUrl || "";
     }
 
+    function videoDownloadAvailable(row) {
+      return Boolean(savedVideoSource(row) || row?.localArchiveKey);
+    }
+
     function videoSource(row) {
       return row.localVideoPreviewUrl || savedVideoSource(row);
+    }
+
+    function muxPlaybackId(row) {
+      return row.muxPlaybackId || row.muxPlaybackIds?.[0] || "";
+    }
+
+    function muxThumbnailSource(row) {
+      const playbackId = muxPlaybackId(row);
+      return playbackId ? `https://image.mux.com/${playbackId}/thumbnail.jpg?time=0` : "";
     }
 
     function cloudinaryVideoPlaybackUrl(url) {
@@ -1189,10 +1428,12 @@
 
     function videoPlaybackSource(row) {
       if (row.localVideoPreviewUrl) return row.localVideoPreviewUrl;
+      if (muxPlaybackId(row)) return "";
       return savedVideoSource(row) || row.videoPlaybackUrl || cloudinaryVideoPlaybackUrl(savedVideoSource(row)) || "";
     }
 
     function videoPlaybackSources(row) {
+      if (muxPlaybackId(row)) return [];
       return [...new Set([
         row.localVideoPreviewUrl || "",
         savedVideoSource(row),
@@ -1215,15 +1456,16 @@
     }
 
     function thumbSource(row) {
-      return row.thumbUrl || "";
+      return row.thumbData || row.thumbUrl || muxThumbnailSource(row) || "";
     }
 
     function renderVisual(row, index) {
       const thumb = thumbSource(row);
       const video = videoPlaybackSource(row);
+      const hasMuxVideo = Boolean(muxPlaybackId(row));
       const badge = row.tiktokPosted ? `<span class="visual-badge">TikTok投稿済み</span>` : "";
       if (thumb) {
-        return `${badge}<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">${video ? `<span class="play">▶</span>` : ""}`;
+        return `${badge}<img src="${escapeHtml(thumb)}" alt="${escapeHtml(row.title)}のサムネイル">${video || hasMuxVideo ? `<span class="play">▶</span>` : ""}`;
       }
       if (video) {
         return `${badge}<video src="${escapeHtml(video)}" muted playsinline preload="metadata"></video><span class="play">▶</span>`;
@@ -1259,11 +1501,12 @@
       const rows = active.rows || [];
       monthPicker.value = active.month;
       $("#monthTitle").textContent = formatMonth(active.month);
-      $("#monthSummary").textContent = `${rows.length}本・${active.channel || "投稿先未設定"}・撮影 ${formatDate(active.shootDate)}・保存Rev ${state.revision || 0}`;
+      $("#monthSummary").textContent = `${rows.length}本・Mux ${muxRowsCount()}/${muxFreeLimit()}本・${active.channel || "投稿先未設定"}・撮影 ${formatDate(active.shootDate)}・保存Rev ${state.revision || 0}`;
 
       videoGrid.innerHTML = rows.map((row, index) => {
         const video = videoSource(row);
         const savedVideo = savedVideoSource(row);
+        const canDownloadVideo = videoDownloadAvailable(row);
         const thumb = thumbSource(row);
         return `
           <article class="video-card ${row.tiktokPosted ? "is-posted" : ""}" data-index="${index}">
@@ -1288,8 +1531,9 @@
               <div class="file-actions">
                 <button class="file-label" type="button" data-action="widget-upload" data-kind="video" data-index="${index}">動画を入れる</button>
                 <button class="file-label" type="button" data-action="widget-upload" data-kind="thumb" data-index="${index}">サムネ変更</button>
-                <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${savedVideo ? "" : "disabled"}>動画保存</button>
+                <button class="download-button" type="button" data-action="download-video" data-index="${index}" ${canDownloadVideo ? "" : "disabled"}>動画保存</button>
                 <button class="download-button" type="button" data-action="download-thumb" data-index="${index}" ${thumb ? "" : "disabled"}>サムネ保存</button>
+                ${row.muxAssetId && !row.muxDeletedAt ? `<button class="download-button" type="button" data-action="delete-mux-video" data-index="${index}">Mux削除</button>` : ""}
                 ${uploadStatusMarkup(row)}
               </div>
             </div>
@@ -1325,7 +1569,7 @@
                 <p><strong>${escapeHtml(row.title)}</strong></p>
                 ${row.tiktokPosted ? `<p class="status ready">TikTok投稿済み</p>` : ""}
                 <div class="file-actions">
-                  <button class="download-button" type="button" data-action="download-history-video" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${savedVideoSource(row) ? "" : "disabled"}>動画保存</button>
+                  <button class="download-button" type="button" data-action="download-history-video" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${videoDownloadAvailable(row) ? "" : "disabled"}>動画保存</button>
                   <button class="download-button" type="button" data-action="download-history-thumb" data-month="${escapeHtml(snapshot.month)}" data-index="${index}" ${thumbSource(row) ? "" : "disabled"}>サムネ保存</button>
                 </div>
               </div>
@@ -1349,6 +1593,7 @@
             <div class="history-content">
               <div class="history-actions">
                 <button class="button primary small" type="button" data-action="restore" data-month="${month}">この月を編集する</button>
+                <button class="button secondary small" type="button" data-action="download-history-zip" data-month="${month}">ZIP保存</button>
                 <button class="button danger small" type="button" data-action="delete-history" data-month="${month}">履歴から削除</button>
               </div>
               ${historyCards(snapshot)}
@@ -1361,6 +1606,11 @@
     function openMedia(row) {
       const videos = videoPlaybackSources(row);
       const thumb = thumbSource(row);
+      const playbackId = muxPlaybackId(row);
+      mediaMuxPlayer.pause?.();
+      mediaMuxPlayer.hidden = true;
+      mediaMuxPlayer.removeAttribute("playback-id");
+      mediaMuxPlayer.removeAttribute("poster");
       mediaVideo.pause();
       mediaVideo.hidden = true;
       mediaImage.hidden = true;
@@ -1370,6 +1620,14 @@
       mediaImage.removeAttribute("src");
       mediaTitle.textContent = row.title || "プレビュー";
       setMediaStatus("");
+      if (playbackId) {
+        mediaMuxPlayer.setAttribute("playback-id", playbackId);
+        if (thumb) mediaMuxPlayer.setAttribute("poster", thumb);
+        mediaMuxPlayer.hidden = false;
+        setMediaStatus(row.muxStatus && row.muxStatus !== "ready" ? "Muxで動画を準備中です。少し待ってからもう一度開いてください" : "");
+        mediaDialog.showModal();
+        return;
+      }
       if (videos.length) {
         videos.forEach((url) => {
           const source = document.createElement("source");
@@ -1408,10 +1666,19 @@
       return `${clean.replace(/\/(image|video|raw)\/upload\//, "/$1/upload/fl_attachment/")}${suffix}`;
     }
 
+    function attachmentUrl(url, filename) {
+      const value = String(url || "");
+      if (value.startsWith("/api/r2/media/")) {
+        const glue = value.includes("?") ? "&" : "?";
+        return `${value}${glue}download=1&name=${encodeURIComponent(filename)}`;
+      }
+      return cloudinaryAttachmentUrl(value);
+    }
+
     function downloadAsset(url, filename) {
       if (!url) return;
       const link = document.createElement("a");
-      link.href = cloudinaryAttachmentUrl(url);
+      link.href = attachmentUrl(url, filename);
       link.download = filename;
       link.target = "_blank";
       link.rel = "noopener";
@@ -1437,6 +1704,154 @@
       } else {
         const url = thumbSource(row);
         downloadAsset(url, `${title}_サムネ${extensionFromUrl(url, ".jpg")}`);
+      }
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast("保存を開始しました");
+    }
+
+    async function downloadRowAsset(row, kind, index) {
+      const title = safeFileTitle(row, index);
+      if (kind === "video") {
+        const local = await getLocalFile(row?.localArchiveKey);
+        if (local?.blob) {
+          downloadBlob(local.blob, `${title}_動画${extensionFromUrl(local.name, ".mp4")}`);
+          return;
+        }
+        const url = savedVideoSource(row);
+        if (!url) {
+          showToast("この端末に元動画がありません。アップロードした端末でZIP保存してください", 7000);
+          return;
+        }
+        downloadAsset(url, `${title}_動画${extensionFromUrl(url, ".mp4")}`);
+        return;
+      }
+      const local = await getLocalFile(row?.localThumbArchiveKey);
+      if (local?.blob) {
+        downloadBlob(local.blob, `${title}_サムネ${extensionFromUrl(local.name, ".jpg")}`);
+        return;
+      }
+      const url = thumbSource(row);
+      downloadAsset(url, `${title}_サムネ${extensionFromUrl(url, ".jpg")}`);
+    }
+
+    function csvCell(value) {
+      return `"${String(value ?? "").replace(/"/g, '""')}"`;
+    }
+
+    async function fetchBlobMaybe(url) {
+      if (!url || url.startsWith("blob:")) return null;
+      try {
+        const response = await fetch(url, { credentials: "include" });
+        if (!response.ok) return null;
+        return await response.blob();
+      } catch {
+        return null;
+      }
+    }
+
+    async function addLocalOrRemoteFile(zip, folder, row, index, kind) {
+      const title = safeFileTitle(row, index);
+      const localKey = kind === "video" ? row.localArchiveKey : row.localThumbArchiveKey;
+      const local = await getLocalFile(localKey);
+      if (local?.blob) {
+        const fallback = kind === "video" ? ".mp4" : ".jpg";
+        zip.file(`${folder}/No${String(index + 1).padStart(2, "0")}_${title}${extensionFromUrl(local.name, fallback)}`, local.blob);
+        return true;
+      }
+
+      const url = kind === "video" ? savedVideoSource(row) : thumbSource(row);
+      const remote = await fetchBlobMaybe(url);
+      if (remote) {
+        const fallback = kind === "video" ? ".mp4" : ".jpg";
+        zip.file(`${folder}/No${String(index + 1).padStart(2, "0")}_${title}${extensionFromUrl(url, fallback)}`, remote);
+        return true;
+      }
+      return false;
+    }
+
+    async function downloadMonthZip(snapshot = state.active) {
+      if (!window.JSZip) {
+        showToast("ZIP機能を読み込めませんでした。少し待ってもう一度押してください", 7000);
+        return;
+      }
+      const rows = snapshot?.rows || [];
+      const zip = new JSZip();
+      const exportedAt = new Date().toISOString();
+      const manifest = {
+        app: "representative-video-scheduler",
+        month: snapshot.month,
+        exportedAt,
+        note: "Videos are stored only when this browser still has the local original file.",
+        rows: rows.map((row, index) => ({
+          no: index + 1,
+          title: row.title || "",
+          postDate: row.postDate || "",
+          tiktokPosted: Boolean(row.tiktokPosted),
+          muxPlaybackId: row.muxPlaybackId || "",
+          muxAssetId: row.muxAssetId || "",
+          localArchivedAt: row.localArchivedAt || ""
+        }))
+      };
+      zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+      zip.file("schedule.csv", [
+        ["No", "投稿日", "タイトル", "TikTok投稿済み", "Mux Playback ID"].map(csvCell).join(","),
+        ...rows.map((row, index) => [
+          index + 1,
+          row.postDate || "",
+          row.title || "",
+          row.tiktokPosted ? "yes" : "no",
+          row.muxPlaybackId || ""
+        ].map(csvCell).join(","))
+      ].join("\n"));
+
+      let videoCount = 0;
+      let thumbCount = 0;
+      for (const [index, row] of rows.entries()) {
+        if (await addLocalOrRemoteFile(zip, "videos", row, index, "video")) videoCount += 1;
+        if (await addLocalOrRemoteFile(zip, "thumbnails", row, index, "thumb")) thumbCount += 1;
+      }
+      zip.file("README.txt", [
+        `Month: ${snapshot.month}`,
+        `Exported: ${exportedAt}`,
+        `Videos included: ${videoCount}/${rows.length}`,
+        `Thumbnails included: ${thumbCount}/${rows.length}`,
+        "",
+        "If a video is missing, it means this browser did not have the local original file. Export from the computer that uploaded it before deleting it from Mux."
+      ].join("\n"));
+      showToast("ZIPを作成中です。動画は圧縮せずにそのまま入れます", 5000);
+      const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      downloadBlob(blob, `${snapshot.month || "month"}_representative_videos.zip`);
+    }
+
+    async function deleteMuxVideo(row, index) {
+      if (!row?.muxAssetId || row.muxDeletedAt) return;
+      const local = await getLocalFile(row.localArchiveKey);
+      const warning = local?.blob
+        ? "Mux上の動画だけ削除します。ローカル保存済みなのでZIP保存できます。"
+        : "この端末に元動画が見つかりません。Muxから消すと再生できなくなります。本当に削除しますか？";
+      if (!confirm(warning)) return;
+      try {
+        setConnection("saving", "Mux削除中");
+        await apiJson(`/api/mux/assets/${encodeURIComponent(row.muxAssetId)}`, { method: "DELETE" });
+        row.muxDeletedAt = new Date().toISOString();
+        row.muxStatus = "deleted";
+        row.muxPlaybackId = "";
+        row.videoPlaybackUrl = "";
+        render();
+        await persistState("Mux上の動画を削除しました");
+      } catch (error) {
+        setConnection("offline", "削除失敗");
+        showToast(error.message || "Mux動画を削除できませんでした", 8000);
       }
     }
 
@@ -1511,6 +1926,253 @@
       row.videoUploadError = "";
     }
 
+    function uploadToSignedUrl(uploadUrl, file, onProgress = () => {}) {
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("PUT", uploadUrl);
+        request.timeout = 45 * 60 * 1000;
+        if (file.type) request.setRequestHeader("Content-Type", file.type);
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        };
+        request.onload = () => {
+          if (request.status >= 200 && request.status < 300) {
+            onProgress(100);
+            resolve();
+          } else {
+            reject(new Error(`R2アップロード失敗 (${request.status})`));
+          }
+        };
+        request.onerror = () => reject(new Error("R2アップロード中に通信が切れました"));
+        request.ontimeout = () => reject(new Error("R2アップロードがタイムアウトしました"));
+        request.send(file);
+      });
+    }
+
+    async function createR2Upload(file, kind, index) {
+      return apiJson("/api/r2/upload-url", {
+        method: "POST",
+        body: {
+          month: state.active.month,
+          slot: index,
+          kind,
+          fileName: file.name,
+          contentType: file.type || "application/octet-stream"
+        }
+      });
+    }
+
+    async function pollMuxAsset(row, index) {
+      if (!row.muxAssetId) return;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt < 3 ? 2500 : 5000));
+        const latest = await apiJson(`/api/mux/assets/${encodeURIComponent(row.muxAssetId)}`).catch(() => null);
+        if (!latest) continue;
+        row.muxStatus = latest.status || row.muxStatus;
+        if (latest.playbackId) row.muxPlaybackId = latest.playbackId;
+        if (row.muxStatus === "ready" || row.muxPlaybackId) {
+          setVideoUploadStatus(row, "Mux再生の準備ができました", 100);
+          render();
+          return;
+        }
+        setVideoUploadStatus(row, `Muxで再生準備中です (${row.muxStatus || "preparing"})`, 100);
+        render();
+      }
+    }
+
+    async function uploadFileViaServer(file, kind, index) {
+      showToast(`${kind === "video" ? "動画" : "サムネ"}をR2へアップロード中です`);
+      setConnection("saving", "保存中");
+      const row = state.active.rows[index];
+      if (!row) return;
+      try {
+        if (kind === "video") {
+          const sizeLabel = formatFileSize(file.size);
+          setLocalVideoPreview(row, file);
+          setVideoUploadStatus(row, `R2へ保存中 0% (${sizeLabel})`, 0);
+        }
+        const upload = await createR2Upload(file, kind, index);
+        await uploadToSignedUrl(upload.uploadUrl, file, (percent) => {
+          if (kind === "video") setVideoUploadStatus(row, `R2へ保存中 ${percent}%`, percent);
+        });
+
+        if (kind === "thumb") {
+          row.thumbUrl = upload.mediaUrl;
+          row.r2ThumbKey = upload.key;
+          row.thumbName = file.name;
+          render();
+          await persistState("サムネをR2に保存して全員に反映しました");
+          return;
+        }
+
+        row.videoUrl = upload.mediaUrl;
+        row.r2VideoKey = upload.key;
+        row.videoFileName = file.name;
+        row.videoProvider = "r2";
+        setVideoUploadStatus(row, "R2保存完了。Muxへ登録中です", 100);
+        render();
+
+        const mux = await apiJson("/api/mux/asset-from-r2", {
+          method: "POST",
+          body: {
+            key: upload.key,
+            month: state.active.month,
+            slot: index,
+            title: row.title,
+            fileName: file.name
+          }
+        });
+        row.videoProvider = "mux-r2";
+        row.muxAssetId = mux.assetId || "";
+        row.muxPlaybackId = mux.playbackId || "";
+        row.muxStatus = mux.status || "preparing";
+        row.videoPlaybackUrl = row.muxPlaybackId ? `https://stream.mux.com/${row.muxPlaybackId}.m3u8` : "";
+        clearLocalVideoPreview(row);
+        render();
+        await persistState("動画をR2へ保存し、Mux再生用として登録しました");
+        const liveRow = state.active.rows[index];
+        await pollMuxAsset(liveRow, index);
+        clearVideoUploadStatus(liveRow);
+        render();
+        await persistState("Mux再生の準備状況を更新しました");
+      } catch (error) {
+        setConnection("offline", "保存失敗");
+        if (kind === "video") {
+          row.videoUploadError = error.message || "もう一度試してください";
+          setVideoUploadStatus(row, `アップロード失敗: ${row.videoUploadError}`, 0);
+        }
+        showToast(`アップロード失敗: ${error.message || "もう一度試してください"}`, 9000);
+      }
+    }
+
+    async function createMuxDirectUpload(file, index) {
+      const row = state.active.rows[index];
+      return apiJson("/api/mux/direct-upload", {
+        method: "POST",
+        body: {
+          month: state.active.month,
+          slot: index,
+          title: row?.title || file.name,
+          fileName: file.name,
+          contentType: file.type || "video/mp4"
+        }
+      });
+    }
+
+    function uploadMuxChunk(uploadUrl, chunk, start, end, total, contentType) {
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("PUT", uploadUrl);
+        request.timeout = 45 * 60 * 1000;
+        request.setRequestHeader("Content-Range", `bytes ${start}-${end}/${total}`);
+        if (contentType) request.setRequestHeader("Content-Type", contentType);
+        request.onload = () => {
+          if ((request.status >= 200 && request.status < 300) || request.status === 308) {
+            resolve();
+          } else {
+            reject(new Error(`Mux upload failed (${request.status})`));
+          }
+        };
+        request.onerror = () => reject(new Error("Mux upload connection failed"));
+        request.ontimeout = () => reject(new Error("Mux upload timed out"));
+        request.send(chunk);
+      });
+    }
+
+    async function uploadMuxChunked(uploadUrl, file, onProgress = () => {}) {
+      for (let start = 0; start < file.size; start += MUX_CHUNK_BYTES) {
+        const end = Math.min(start + MUX_CHUNK_BYTES - 1, file.size - 1);
+        const chunk = file.slice(start, end + 1);
+        await uploadMuxChunk(uploadUrl, chunk, start, end, file.size, file.type || "video/mp4");
+        onProgress(Math.min(99, Math.round(((end + 1) / file.size) * 100)));
+      }
+      onProgress(100);
+    }
+
+    async function pollMuxUpload(row, index) {
+      if (!row.muxUploadId) return;
+      for (let attempt = 0; attempt < 18; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt < 4 ? 2500 : 5000));
+        const latest = await apiJson(`/api/mux/uploads/${encodeURIComponent(row.muxUploadId)}`).catch(() => null);
+        if (!latest) continue;
+        row.muxStatus = latest.status || latest.uploadStatus || row.muxStatus;
+        if (latest.assetId) row.muxAssetId = latest.assetId;
+        if (latest.playbackId) row.muxPlaybackId = latest.playbackId;
+        if (latest.errored) throw new Error(latest.message || "Mux processing failed");
+        if (row.muxPlaybackId || row.muxStatus === "ready") {
+          setVideoUploadStatus(row, "Mux再生の準備ができました", 100);
+          render();
+          return;
+        }
+        setVideoUploadStatus(row, `Muxで再生準備中です (${row.muxStatus || "processing"})`, 100);
+        render();
+      }
+    }
+
+    async function uploadFileViaServer(file, kind, index) {
+      if (kind !== "video") return;
+      setConnection("saving", "保存中");
+      const row = state.active.rows[index];
+      if (!row) return;
+      if (!canAddMuxVideo(row)) {
+        const message = row.muxAssetId && !row.muxDeletedAt
+          ? "この枠にはMux動画があります。先にZIP保存してからMux削除を押してください"
+          : `Mux Freeは${muxFreeLimit()}本までです。古い動画をZIP保存してからMux削除してください`;
+        showToast(message, 9000);
+        return;
+      }
+      try {
+        const sizeLabel = formatFileSize(file.size);
+        const archiveKey = localFileKey(state.active.month, index, "video", file.name);
+        const localSaved = await putLocalFile(archiveKey, file, {
+          month: state.active.month,
+          slot: index,
+          title: row.title,
+          kind: "video"
+        });
+        if (localSaved) {
+          row.localArchiveKey = archiveKey;
+          row.localArchivedAt = new Date().toISOString();
+        } else {
+          row.localArchiveKey = "";
+          row.localArchivedAt = "";
+          showToast("ローカル保存に失敗しました。空き容量を確認してください", 9000);
+        }
+        row.videoUploadError = "";
+        setLocalVideoPreview(row, file);
+        setVideoUploadStatus(row, `${localSaved ? "ローカル保存済み。" : "ローカル未保存。"}Muxへアップロード中 0% (${sizeLabel})`, 0);
+        render();
+
+        const upload = await createMuxDirectUpload(file, index);
+        row.videoProvider = "mux-free";
+        row.muxUploadId = upload.uploadId || "";
+        row.muxStatus = upload.status || "waiting";
+        row.videoFileName = file.name;
+        row.videoUrl = "";
+        row.videoPlaybackUrl = "";
+
+        await uploadMuxChunked(upload.uploadUrl, file, (percent) => {
+          setVideoUploadStatus(row, `Muxへアップロード中 ${percent}% (${sizeLabel})`, percent);
+        });
+        setVideoUploadStatus(row, "Muxへアップロード完了。再生準備中です", 100);
+        clearLocalVideoPreview(row);
+        render();
+        await persistState("動画をMux Freeへ保存しました。ローカル保存も完了しています");
+
+        const liveRow = state.active.rows[index];
+        await pollMuxUpload(liveRow, index);
+        clearVideoUploadStatus(liveRow);
+        render();
+        await persistState("Mux再生の準備状況を更新しました");
+      } catch (error) {
+        setConnection("offline", "保存失敗");
+        row.videoUploadError = error.message || "もう一度試してください";
+        setVideoUploadStatus(row, `アップロード失敗: ${row.videoUploadError}`, 0);
+        showToast(`アップロード失敗: ${row.videoUploadError}`, 9000);
+      }
+    }
+
     function fallbackFilePick(kind, index) {
       const input = document.createElement("input");
       input.type = "file";
@@ -1525,8 +2187,16 @@
     async function openUploadWidget(kind, index) {
       const row = state.active.rows[index];
       if (!row) return;
+      if (await canUseServerUpload(kind)) {
+        fallbackFilePick(kind, index);
+        return;
+      }
       if (kind === "video") {
         row.videoUploadError = "";
+        const capabilities = await refreshApiCapabilities();
+        if (capabilities?.state && (!capabilities.r2Configured || !capabilities.muxConfigured)) {
+          showToast("Muxの接続情報がまだ未設定です。今は従来アップロードで開きます", 6000);
+        }
         setVideoUploadStatus(row, "Cloudinary公式アップロード画面を開いています（100MB超も対応）", 1);
       }
       showToast(`${uploadKindName(kind)}アップロード画面を開きます`, kind === "video" ? 5000 : 3000);
@@ -1732,6 +2402,26 @@
       const active = state.active;
       const row = active.rows[index];
       if (!row) return;
+      if (kind === "thumb") {
+        const thumbArchiveKey = localFileKey(active.month, index, "thumb", file.name);
+        await putLocalFile(thumbArchiveKey, file, {
+          month: active.month,
+          slot: index,
+          title: row.title,
+          kind: "thumb"
+        });
+        row.localThumbArchiveKey = thumbArchiveKey;
+        row.thumbData = await imageFileToDataUrl(file);
+        row.thumbName = file.name;
+        row.thumbUrl = "";
+        render();
+        await persistState("サムネを全員の画面に反映しました");
+        return;
+      }
+      if (await canUseServerUpload(kind)) {
+        await uploadFileViaServer(file, kind, index);
+        return;
+      }
       try {
         const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(-80);
         const uploadName = safeName;
@@ -1782,11 +2472,14 @@
     loginForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       loginError.textContent = "";
-      if ($("#passcode").value !== CLOUDINARY.password) {
+      const passcode = $("#passcode").value;
+      const serverLoggedIn = await tryServerLogin(passcode);
+      if (!serverLoggedIn && passcode !== CLOUDINARY.password) {
         loginError.textContent = "パスワードが違います";
         return;
       }
       unlockApp();
+      if (!serverLoggedIn) await refreshApiCapabilities({ force: true });
       await loadLatest({ quiet: true });
     });
 
@@ -1863,8 +2556,10 @@
       }
       if (action === "download-video") downloadRowAsset(state.active.rows[index], "video", index);
       if (action === "download-thumb") downloadRowAsset(state.active.rows[index], "thumb", index);
+      if (action === "delete-mux-video") await deleteMuxVideo(state.active.rows[index], index);
       if (action === "download-history-video") downloadRowAsset(state.archives[target.dataset.month].rows[index], "video", index);
       if (action === "download-history-thumb") downloadRowAsset(state.archives[target.dataset.month].rows[index], "thumb", index);
+      if (action === "download-history-zip") await downloadMonthZip(state.archives[target.dataset.month]);
       if (action === "restore") {
         const month = target.dataset.month;
         state.active = structuredClone(state.archives[month]);
@@ -1892,6 +2587,10 @@
     });
     $("#closeMedia").addEventListener("click", () => mediaDialog.close());
     mediaDialog.addEventListener("close", () => {
+      mediaMuxPlayer.pause?.();
+      mediaMuxPlayer.hidden = true;
+      mediaMuxPlayer.removeAttribute("playback-id");
+      mediaMuxPlayer.removeAttribute("poster");
       mediaVideo.pause();
       mediaVideo.innerHTML = "";
       mediaVideo.removeAttribute("src");
@@ -1926,8 +2625,15 @@
       await persistState("今月の中身を全削除しました");
     });
 
+    $("#downloadCurrentZip").addEventListener("click", async () => {
+      await downloadMonthZip(state.active);
+    });
+
     $("#archiveCurrent").addEventListener("click", async () => {
-      state.archives[state.active.month] = structuredClone(state.active);
+      const snapshot = structuredClone(state.active);
+      snapshot.archivedAt = new Date().toISOString();
+      snapshot.archiveProvider = "local-zip";
+      state.archives[state.active.month] = snapshot;
       render();
       await persistState(`${formatMonth(state.active.month)}を履歴に保存しました`);
     });
@@ -1983,6 +2689,16 @@
       if (Date.now() - lastPollAt < 3500) return;
       lastPollAt = Date.now();
       try {
+        if (await canUseServerState()) {
+          const latest = normalizeState(await apiJson("/api/state"));
+          if (Number(latest.revision || 0) > Number(state.revision || 0)) {
+            state = latest;
+            render();
+            showToast("ほかの人の変更を反映しました");
+          }
+          setConnection("online", "同期中");
+          return;
+        }
         const nextRevision = Number(state.revision || 0) + 1;
         const next = await fetchRevision(nextRevision);
         if (next) {
