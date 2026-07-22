@@ -20,6 +20,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const CLOUDINARY = parseCloudinaryUrl(process.env.CLOUDINARY_URL || "");
 const CLOUDINARY_STATE_ID = "representative-video-scheduler/state.json";
+const MUX = parseMuxConfig();
+const R2 = parseR2Config();
+const MUX_FREE_ASSET_LIMIT = 10;
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -79,6 +82,217 @@ function parseCloudinaryUrl(value) {
   } catch {
     return null;
   }
+}
+
+function parseMuxConfig() {
+  const tokenId = process.env.MUX_TOKEN_ID || "";
+  const tokenSecret = process.env.MUX_TOKEN_SECRET || "";
+  return tokenId && tokenSecret ? { tokenId, tokenSecret } : null;
+}
+
+function parseR2Config() {
+  const accountId = process.env.R2_ACCOUNT_ID || process.env.CLOUDFLARE_ACCOUNT_ID || "";
+  const bucket = process.env.R2_BUCKET || "";
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID || "";
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || "";
+  return accountId && bucket && accessKeyId && secretAccessKey
+    ? { accountId, bucket, accessKeyId, secretAccessKey }
+    : null;
+}
+
+function awsEncode(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function hmac(key, value, encoding) {
+  return crypto.createHmac("sha256", key).update(value).digest(encoding);
+}
+
+function amzTimestamp(date = new Date()) {
+  return date.toISOString().replace(/[:-]|\.\d{3}/g, "");
+}
+
+function r2ObjectPath(key) {
+  return `/${awsEncode(R2.bucket)}/${String(key).split("/").map(awsEncode).join("/")}`;
+}
+
+function r2PresignedUrl(method, key, expiresIn = 3600) {
+  if (!R2) throw new Error("r2_not_configured");
+  const now = new Date();
+  const amzDate = amzTimestamp(now);
+  const dateStamp = amzDate.slice(0, 8);
+  const host = `${R2.accountId}.r2.cloudflarestorage.com`;
+  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
+  const params = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Content-Sha256": "UNSIGNED-PAYLOAD",
+    "X-Amz-Credential": `${R2.accessKeyId}/${credentialScope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(expiresIn),
+    "X-Amz-SignedHeaders": "host"
+  };
+  const canonicalQuery = Object.keys(params)
+    .sort()
+    .map((name) => `${awsEncode(name)}=${awsEncode(params[name])}`)
+    .join("&");
+  const canonicalHeaders = `host:${host}\n`;
+  const canonicalRequest = [
+    method,
+    r2ObjectPath(key),
+    canonicalQuery,
+    canonicalHeaders,
+    "host",
+    "UNSIGNED-PAYLOAD"
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    sha256Hex(canonicalRequest)
+  ].join("\n");
+  const dateKey = hmac(`AWS4${R2.secretAccessKey}`, dateStamp);
+  const regionKey = hmac(dateKey, "auto");
+  const serviceKey = hmac(regionKey, "s3");
+  const signingKey = hmac(serviceKey, "aws4_request");
+  const signature = hmac(signingKey, stringToSign, "hex");
+  return `https://${host}${r2ObjectPath(key)}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+function protectedR2MediaUrl(key, filename = "") {
+  const encoded = Buffer.from(key, "utf8").toString("base64url");
+  const suffix = filename ? `?name=${encodeURIComponent(filename)}` : "";
+  return `/api/r2/media/${encoded}${suffix}`;
+}
+
+function decodeR2MediaKey(value) {
+  try {
+    const key = Buffer.from(value, "base64url").toString("utf8");
+    if (!key || key.includes("..") || key.startsWith("/") || key.startsWith("\\")) return null;
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+async function muxApi(pathname, options = {}) {
+  if (!MUX) throw new Error("mux_not_configured");
+  const headers = {
+    "Authorization": `Basic ${Buffer.from(`${MUX.tokenId}:${MUX.tokenSecret}`).toString("base64")}`,
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+  const response = await fetch(`https://api.mux.com/video/v1${pathname}`, {
+    method: options.method || "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const text = await response.text();
+  let result = {};
+  try {
+    result = text ? JSON.parse(text) : {};
+  } catch {
+    result = { message: text };
+  }
+  if (!response.ok) {
+    const messages = result.error?.messages || result.error?.message || result.message;
+    throw new Error(Array.isArray(messages) ? messages.join(", ") : messages || "mux_request_failed");
+  }
+  return result;
+}
+
+async function muxRequest(pathname, options = {}) {
+  const result = await muxApi(pathname, options);
+  return result.data || result;
+}
+
+function muxPlaybackId(asset) {
+  return (asset?.playback_ids || []).find((item) => item.policy === "public")?.id
+    || asset?.playback_ids?.[0]?.id
+    || "";
+}
+
+async function createMuxAssetFromR2Key(key, metadata = {}) {
+  const sourceUrl = r2PresignedUrl("GET", key, 7 * 24 * 60 * 60);
+  const passthrough = JSON.stringify({
+    source: "representative-video-scheduler",
+    month: metadata.month || "",
+    slot: metadata.slot || "",
+    title: String(metadata.title || "").slice(0, 120)
+  }).slice(0, 255);
+  const asset = await muxRequest("/assets", {
+    method: "POST",
+    body: {
+      inputs: [{ url: sourceUrl }],
+      playback_policies: ["public"],
+      video_quality: "basic",
+      passthrough
+    }
+  });
+  return {
+    assetId: asset.id,
+    playbackId: muxPlaybackId(asset),
+    status: asset.status || "preparing"
+  };
+}
+
+function muxDirectUploadAssetId(upload) {
+  return upload?.asset_id || upload?.assetId || "";
+}
+
+async function createMuxDirectUpload(metadata = {}, origin = "*") {
+  const slot = String(metadata.slot ?? "");
+  const title = String(metadata.title || metadata.fileName || "Video").slice(0, 120);
+  const passthrough = JSON.stringify({
+    source: "representative-video-scheduler",
+    flow: "mux-free-direct",
+    month: metadata.month || "",
+    slot,
+    title
+  }).slice(0, 255);
+  const upload = await muxRequest("/uploads", {
+    method: "POST",
+    body: {
+      cors_origin: origin || "*",
+      new_asset_settings: {
+        playback_policies: ["public"],
+        video_quality: "basic",
+        passthrough,
+        meta: {
+          title,
+          external_id: `${metadata.month || "month"}-${slot || "slot"}`
+        }
+      }
+    }
+  });
+  return {
+    uploadId: upload.id,
+    uploadUrl: upload.url,
+    status: upload.status || "waiting"
+  };
+}
+
+async function readMuxDirectUpload(uploadId) {
+  const upload = await muxRequest(`/uploads/${encodeURIComponent(uploadId)}`);
+  const assetId = muxDirectUploadAssetId(upload);
+  let asset = null;
+  if (assetId) {
+    asset = await muxRequest(`/assets/${encodeURIComponent(assetId)}`).catch(() => null);
+  }
+  return {
+    uploadId: upload.id || uploadId,
+    uploadStatus: upload.status || "",
+    assetId,
+    status: asset?.status || upload.asset_status || "",
+    playbackId: muxPlaybackId(asset),
+    errored: Boolean(upload.error || asset?.errors),
+    message: upload.error?.message || asset?.errors?.messages?.join?.(", ") || ""
+  };
 }
 
 function cloudinarySignature(params) {
@@ -268,6 +482,19 @@ function serveFile(res, filePath) {
 }
 
 async function handleApi(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/capabilities") {
+    sendJson(res, 200, {
+      ok: true,
+      state: true,
+      muxConfigured: Boolean(MUX),
+      r2Configured: Boolean(R2),
+      muxFreeAssetLimit: MUX_FREE_ASSET_LIMIT,
+      maxUploadBytes: MAX_UPLOAD_BYTES,
+      preferredVideoFlow: MUX ? "mux-direct" : CLOUDINARY ? "cloudinary" : "local"
+    });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/login") {
     try {
       const body = JSON.parse((await readBody(req)).toString("utf8"));
@@ -286,6 +513,166 @@ async function handleApi(req, res, url) {
 
   if (!isAuthorized(req)) {
     sendJson(res, 401, { ok: false, message: "ログインしてください" });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/mux/direct-upload") {
+    if (!MUX) {
+      sendJson(res, 503, { ok: false, message: "Mux is not configured" });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req, 256 * 1024)).toString("utf8"));
+      const origin = req.headers.origin || "*";
+      sendJson(res, 200, {
+        ok: true,
+        ...(await createMuxDirectUpload(body, origin))
+      });
+    } catch (error) {
+      sendJson(res, 502, { ok: false, message: error.message || "mux_direct_upload_failed" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/mux/uploads/")) {
+    if (!MUX) {
+      sendJson(res, 503, { ok: false, message: "Mux is not configured" });
+      return;
+    }
+    try {
+      const uploadId = safeSegment(url.pathname.slice("/api/mux/uploads/".length), "");
+      sendJson(res, 200, {
+        ok: true,
+        ...(await readMuxDirectUpload(uploadId))
+      });
+    } catch (error) {
+      sendJson(res, 502, { ok: false, message: error.message || "mux_upload_fetch_failed" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/r2/upload-url") {
+    if (!R2) {
+      sendJson(res, 503, { ok: false, message: "Cloudflare R2 is not configured" });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req, 256 * 1024)).toString("utf8"));
+      const month = safeSegment(body.month, "month");
+      const slot = safeSegment(body.slot, "0");
+      const kind = body.kind === "thumb" ? "thumb" : "video";
+      const original = safeSegment(body.fileName, kind === "thumb" ? "thumbnail.jpg" : "video.mp4");
+      const key = [
+        "representative-video-scheduler",
+        "media",
+        month,
+        `slot-${slot}`,
+        `${kind}-${Date.now()}-${original}`
+      ].join("/");
+      sendJson(res, 200, {
+        ok: true,
+        key,
+        uploadUrl: r2PresignedUrl("PUT", key, 3600),
+        mediaUrl: protectedR2MediaUrl(key, original)
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, message: error.message || "r2_upload_url_failed" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/r2/media/")) {
+    if (!R2) {
+      sendJson(res, 503, { ok: false, message: "Cloudflare R2 is not configured" });
+      return;
+    }
+    const key = decodeR2MediaKey(url.pathname.slice("/api/r2/media/".length));
+    if (!key) {
+      sendJson(res, 403, { ok: false });
+      return;
+    }
+    try {
+      const headers = {};
+      if (req.headers.range) headers.Range = req.headers.range;
+      const upstream = await fetch(r2PresignedUrl("GET", key, 3600), { headers });
+      const responseHeaders = {
+        "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
+        "Accept-Ranges": upstream.headers.get("accept-ranges") || "bytes",
+        "Cache-Control": "private, max-age=3600"
+      };
+      if (upstream.headers.get("content-length")) {
+        responseHeaders["Content-Length"] = upstream.headers.get("content-length");
+      }
+      if (upstream.headers.get("content-range")) {
+        responseHeaders["Content-Range"] = upstream.headers.get("content-range");
+      }
+      if (url.searchParams.get("download") === "1") {
+        const filename = safeSegment(url.searchParams.get("name"), path.basename(key) || "download");
+        responseHeaders["Content-Disposition"] = `attachment; filename="${filename}"`;
+      }
+      res.writeHead(upstream.status, responseHeaders);
+      if (upstream.body) Readable.fromWeb(upstream.body).pipe(res);
+      else res.end();
+    } catch {
+      sendJson(res, 502, { ok: false, message: "R2 media fetch failed" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/mux/asset-from-r2") {
+    if (!MUX || !R2) {
+      sendJson(res, 503, { ok: false, message: "Mux and Cloudflare R2 are not configured" });
+      return;
+    }
+    try {
+      const body = JSON.parse((await readBody(req, 256 * 1024)).toString("utf8"));
+      const key = decodeR2MediaKey(Buffer.from(String(body.key || ""), "utf8").toString("base64url"));
+      if (!key) {
+        sendJson(res, 400, { ok: false, message: "Invalid R2 key" });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        ...(await createMuxAssetFromR2Key(key, body))
+      });
+    } catch (error) {
+      sendJson(res, 502, { ok: false, message: error.message || "mux_asset_create_failed" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/mux/assets/")) {
+    if (!MUX) {
+      sendJson(res, 503, { ok: false, message: "Mux is not configured" });
+      return;
+    }
+    try {
+      const assetId = safeSegment(url.pathname.slice("/api/mux/assets/".length), "");
+      const asset = await muxRequest(`/assets/${assetId}`);
+      sendJson(res, 200, {
+        ok: true,
+        assetId: asset.id,
+        playbackId: muxPlaybackId(asset),
+        status: asset.status || "preparing"
+      });
+    } catch (error) {
+      sendJson(res, 502, { ok: false, message: error.message || "mux_asset_fetch_failed" });
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/api/mux/assets/")) {
+    if (!MUX) {
+      sendJson(res, 503, { ok: false, message: "Mux is not configured" });
+      return;
+    }
+    try {
+      const assetId = safeSegment(url.pathname.slice("/api/mux/assets/".length), "");
+      await muxRequest(`/assets/${assetId}`, { method: "DELETE" });
+      sendJson(res, 200, { ok: true, assetId });
+    } catch (error) {
+      sendJson(res, 502, { ok: false, message: error.message || "mux_asset_delete_failed" });
+    }
     return;
   }
 
